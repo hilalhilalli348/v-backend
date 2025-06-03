@@ -1,0 +1,31 @@
+server:
+  port: 8080
+
+spring:
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/videostreaming
+    username: postgres
+    password: password
+
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 500MB
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+video:
+  storage:
+    path: src/videos
+  upload:
+    max-size: 500MB
+
+ffmpeg:
+  path: ffmpeg
+  timeout: 30
+
+logging:
+  level:
+    com.videostreaming: DEBUG
+    org.springframework.r2dbc: DEBUG

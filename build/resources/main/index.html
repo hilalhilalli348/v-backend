@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Streaming Platform</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dashjs/4.7.2/dash.all.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .upload-section {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .upload-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        input[type="text"], input[type="file"] {
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus, input[type="file"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .upload-btn {
+            padding: 15px 30px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .upload-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .video-list {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .video-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            transition: background-color 0.2s;
+        }
+
+        .video-item:hover {
+            background-color: #f8f9fa;
+        }
+
+        .video-info h3 {
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        .video-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .status-ready { background: #d4edda; color: #155724; }
+        .status-processing { background: #fff3cd; color: #856404; }
+        .status-uploading { background: #cce7ff; color: #004085; }
+        .status-error { background: #f8d7da; color: #721c24; }
+
+        .play-btn {
+            padding: 8px 16px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+
+        .play-btn:hover {
+            background: #218838;
+        }
+
+        .play-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+
+        .player-section {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            display: none;
+        }
+
+        .player-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .format-btn {
+            padding: 8px 16px;
+            border: 2px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .format-btn.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .format-btn:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        #videoPlayer {
+            width: 100%;
+            max-width: 800px;
+            border-radius: 8px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .error {
+            color: #dc3545;
+            text-align: center;
+            padding: 20px;
+            background: #f8d7da;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .success {
+            color: #155724;
+            text-align: center;
+            padding: 20px;
+            background: #d4edda;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+
+            .header h1 {
+                font-size: 2em;
+            }
+
+            .upload-section, .video-list, .player-section {
+                padding: 20px;
+            }
+
+            .video-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>🎥 Video Streaming Platform</h1>
+        <p>HLS ve DASH destekli video yükleme ve izleme platformu</p>
+    </div>
+
+    <!-- Upload Section -->
+    <div class="upload-section">
+        <h2>Video Yükle</h2>
+        <form id="uploadForm" class="upload-form">
+            <div class="form-group">
+                <label for="videoTitle">Video Başlığı:</label>
+                <input type="text" id="videoTitle" name="title" required placeholder="Video başlığını girin...">
+            </div>
+            <div class="form-group">
+                <label for="videoFile">Video Dosyası:</label>
+                <input type="file" id="videoFile" name="file" accept="video/*" required>
+            </div>
+            <button type="submit" class="upload-btn" id="uploadBtn">Video Yükle</button>
+        </form>
+        <div id="uploadProgress" style="display: none;" class="loading">
+            Yükleniyor... Lütfen bekleyin.
+        </div>
+    </div>
+
+    <!-- Video List Section -->
+    <div class="video-list">
+        <h2>Videolar</h2>
+        <div id="videoList">
+            <div class="loading">Videolar yükleniyor...</div>
+        </div>
+    </div>
+
+    <!-- Player Section -->
+    <div class="player-section" id="playerSection">
+        <h2 id="currentVideoTitle">Video Oynatıcı</h2>
+        <div class="player-controls">
+            <button class="format-btn active" id="hlsBtn" onclick="switchFormat('hls')">HLS</button>
+            <button class="format-btn" id="dashBtn" onclick="switchFormat('dash')">DASH</button>
+            <select id="qualitySelect" style="display: none;">
+                <option value="">Kalite Seçin</option>
+            </select>
+        </div>
+        <video id="videoPlayer" controls preload="metadata">
+            Tarayıcınız video elementini desteklemiyor.
+        </video>
+        <div id="playerInfo" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
+    </div>
+</div>
+
+<script>
+    let currentVideo = null;
+    let currentFormat = 'hls';
+    let hlsPlayer = null;
+    let dashPlayer = null;
+
+    // API Base URL
+    const API_BASE = 'http://localhost:8080/api/videos';
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', function() {
+        loadVideoList();
+        setupUploadForm();
+    });
+
+    // Setup upload form
+    function setupUploadForm() {
+        const form = document.getElementById('uploadForm');
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const title = document.getElementById('videoTitle').value;
+            const file = document.getElementById('videoFile').files[0];
+
+            if (!title || !file) {
+                showError('Lütfen tüm alanları doldurun.');
+                return;
+            }
+
+            const uploadBtn = document.getElementById('uploadBtn');
+            const uploadProgress = document.getElementById('uploadProgress');
+
+            uploadBtn.disabled = true;
+            uploadProgress.style.display = 'block';
+
+            try {
+                const formData = new FormData();
+                formData.append('title', title);
+                formData.append('file', file);
+
+                const response = await fetch(`${API_BASE}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    showSuccess('Video başarıyla yüklendi! İşleme alındı.');
+                    form.reset();
+                    loadVideoList();
+                } else {
+                    throw new Error('Upload failed');
+                }
+            } catch (error) {
+                showError('Video yükleme hatası: ' + error.message);
+            } finally {
+                uploadBtn.disabled = false;
+                uploadProgress.style.display = 'none';
+            }
+        });
+    }
+
+    // Load video list
+    async function loadVideoList() {
+        try {
+            const response = await fetch(API_BASE);
+            const videos = await response.json();
+
+            const videoList = document.getElementById('videoList');
+
+            if (videos.length === 0) {
+                videoList.innerHTML = '<div class="loading">Henüz video yüklenmemiş.</div>';
+                return;
+            }
+
+            videoList.innerHTML = videos.map(video => `
+                    <div class="video-item">
+                        <div class="video-info">
+                            <h3>${video.title}</h3>
+                            <p style="color: #666; font-size: 14px;">
+                                ${video.originalFilename} • ${formatFileSize(video.fileSize)}
+                                ${video.duration ? ` • ${formatDuration(video.duration)}` : ''}
+                            </p>
+                            <span class="video-status status-${video.status.toLowerCase()}">${getStatusText(video.status)}</span>
+                        </div>
+                        <button class="play-btn" onclick="playVideo(${video.id})"
+                                ${video.status !== 'READY' ? 'disabled' : ''}>
+                            ${video.status === 'READY' ? 'Oynat' : 'Bekleyin'}
+                        </button>
+                    </div>
+                `).join('');
+        } catch (error) {
+            document.getElementById('videoList').innerHTML =
+                '<div class="error">Video listesi yüklenemedi.</div>';
+        }
+    }
+
+    // Play video
+    async function playVideo(videoId) {
+        try {
+            const response = await fetch(`${API_BASE}/${videoId}`);
+            const video = await response.json();
+
+            if (video.status !== 'READY') {
+                showError('Video henüz hazır değil.');
+                return;
+            }
+
+            currentVideo = video;
+            document.getElementById('currentVideoTitle').textContent = video.title;
+            document.getElementById('playerSection').style.display = 'block';
+
+            // Scroll to player
+            document.getElementById('playerSection').scrollIntoView({ behavior: 'smooth' });
+
+            // Start with HLS
+            switchFormat('hls');
+
+        } catch (error) {
+            showError('Video oynatma hatası: ' + error.message);
+        }
+    }
+
+    // Switch format
+    function switchFormat(format) {
+        if (!currentVideo) return;
+
+        currentFormat = format;
+
+        // Update button states
+        document.getElementById('hlsBtn').classList.toggle('active', format === 'hls');
+        document.getElementById('dashBtn').classList.toggle('active', format === 'dash');
+
+        const video = document.getElementById('videoPlayer');
+
+        // Clean up existing players
+        if (hlsPlayer) {
+            hlsPlayer.destroy();
+            hlsPlayer = null;
+        }
+        if (dashPlayer) {
+            dashPlayer.reset();
+            dashPlayer = null;
+        }
+
+        if (format === 'hls') {
+            loadHLS();
+        } else if (format === 'dash') {
+            loadDASH();
+        }
+    }
+
+    // Load HLS
+    function loadHLS() {
+        const video = document.getElementById('videoPlayer');
+        const hlsUrl = `${API_BASE}/${currentVideo.id}/hls/playlist.m3u8`;
+
+        if (Hls.isSupported()) {
+            hlsPlayer = new Hls({
+                debug: false,
+                enableWorker: true,
+                lowLatencyMode: true
+            });
+
+            hlsPlayer.loadSource(hlsUrl);
+            hlsPlayer.attachMedia(video);
+
+            hlsPlayer.on(Hls.Events.MANIFEST_PARSED, function() {
+                updatePlayerInfo('HLS formatı yüklendi');
+                updateQualitySelector(hlsPlayer.levels);
+            });
+
+            hlsPlayer.on(Hls.Events.ERROR, function(event, data) {
+                console.error('HLS Error:', data);
+                updatePlayerInfo('HLS yükleme hatası: ' + data.details);
+            });
+
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            // Safari native support
+            video.src = hlsUrl;
+            updatePlayerInfo('Native HLS desteği kullanılıyor');
+        } else {
+            showError('HLS bu tarayıcıda desteklenmiyor.');
+        }
+    }
+
+    // Load DASH
+    function loadDASH() {
+        const video = document.getElementById('videoPlayer');
+        const dashUrl = `${API_BASE}/${currentVideo.id}/dash/manifest.mpd`;
+
+        if (typeof dashjs !== 'undefined') {
+            dashPlayer = dashjs.MediaPlayer().create();
+            dashPlayer.initialize(video, dashUrl, false);
+
+            dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, function() {
+                updatePlayerInfo('DASH formatı yüklendi');
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.ERROR, function(e) {
+                console.error('DASH Error:', e);
+                updatePlayerInfo('DASH yükleme hatası');
+            });
+        } else {
+            showError('DASH oynatıcı yüklenemedi.');
+        }
+    }
+
+    // Update quality selector
+    function updateQualitySelector(levels) {
+        const select = document.getElementById('qualitySelect');
+        select.style.display = levels && levels.length > 1 ? 'block' : 'none';
+
+        if (levels && levels.length > 1) {
+            select.innerHTML = '<option value="-1">Otomatik</option>' +
+                levels.map((level, index) =>
+                    `<option value="${index}">${level.height}p (${Math.round(level.bitrate/1000)}kbps)</option>`
+                ).join('');
+
+            select.onchange = function() {
+                if (hlsPlayer) {
+                    hlsPlayer.currentLevel = parseInt(this.value);
+                }
+            };
+        }
+    }
+
+    // Update player info
+    function updatePlayerInfo(message) {
+        document.getElementById('playerInfo').textContent = message;
+    }
+
+    // Utility functions
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function formatDuration(seconds) {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    function getStatusText(status) {
+        const statusMap = {
+            'UPLOADING': 'Yükleniyor',
+            'PROCESSING': 'İşleniyor',
+            'READY': 'Hazır',
+            'ERROR': 'Hata'
+        };
+        return statusMap[status] || status;
+    }
+
+    function showError(message) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error';
+        errorDiv.textContent = message;
+        document.body.appendChild(errorDiv);
+        setTimeout(() => errorDiv.remove(), 5000);
+    }
+
+    function showSuccess(message) {
+        const successDiv = document.createElement('div');
+        successDiv.className = 'success';
+        successDiv.textContent = message;
+        document.body.appendChild(successDiv);
+        setTimeout(() => successDiv.remove(), 5000);
+    }
+
+    // Auto-refresh video list every 30 seconds
+    setInterval(loadVideoList, 30000);
+</script>
+</body>
+</html>
