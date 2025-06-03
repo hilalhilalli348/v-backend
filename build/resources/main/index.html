@@ -483,43 +483,175 @@
     }
 
     // Load DASH
+    // Load DASH - İyileştirilmiş versiyon
     function loadDASH() {
         const video = document.getElementById('videoPlayer');
         const dashUrl = `${API_BASE}/${currentVideo.id}/dash/manifest.mpd`;
 
         if (typeof dashjs !== 'undefined') {
             dashPlayer = dashjs.MediaPlayer().create();
-            dashPlayer.initialize(video, dashUrl, false);
 
+            // DASH player ayarları
+            dashPlayer.updateSettings({
+                'streaming': {
+                    'abandonLoadTimeout': 10000,
+                    'wallclockTimeUpdateInterval': 100,
+                    'scheduleWhilePaused': false,
+                    'fastSwitchEnabled': true,
+                    'bufferTimeAtTopQuality': 20,
+                    'bufferTimeAtTopQualityLongForm': 60,
+                    'longFormContentDurationThreshold': 600,
+                    'stallThreshold': 0.5,
+                    'bufferToKeep': 20,
+                    'bufferPruningInterval': 10,
+                    'bufferTimeDefault': 12,
+                    'retryAttempts': {
+                        'MPD': 3,
+                        'XLinkExpansion': 1,
+                        'InitialRepresentation': 3,
+                        'MediaSegment': 3,
+                        'BitstreamSwitching': 3,
+                        'FragmentedText': 3,
+                        'other': 3
+                    },
+                    'retryIntervals': {
+                        'MPD': 500,
+                        'XLinkExpansion': 1000,
+                        'InitialRepresentation': 1000,
+                        'MediaSegment': 1000,
+                        'BitstreamSwitching': 1000,
+                        'FragmentedText': 1000,
+                        'other': 1000
+                    }
+                },
+                'debug': {
+                    'logLevel': dashjs.Debug.LOG_LEVEL_ERROR
+                }
+            });
+
+            // Event listeners
             dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, function() {
-                updatePlayerInfo('DASH formatı yüklendi');
+                updatePlayerInfo('DASH formatı yüklendi - çoklu kalite destekleniyor');
+
+                // DASH kalite seçimi için
+                setTimeout(() => {
+                    updateDASHQualitySelector();
+                }, 1000);
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.PLAYBACK_STARTED, function() {
+                updatePlayerInfo('DASH oynatma başladı');
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.PLAYBACK_SEEKING, function() {
+                updatePlayerInfo('DASH arama yapılıyor...');
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.PLAYBACK_SEEKED, function() {
+                updatePlayerInfo('DASH arama tamamlandı');
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.QUALITY_CHANGE_RENDERED, function(e) {
+                if (e.mediaType === 'video') {
+                    const quality = dashPlayer.getBitrateInfoListFor('video')[e.newQuality];
+                    updatePlayerInfo(`DASH kalite değişti: ${quality.height}p (${Math.round(quality.bitrate/1000)}kbps)`);
+                }
             });
 
             dashPlayer.on(dashjs.MediaPlayer.events.ERROR, function(e) {
-                console.error('DASH Error:', e);
-                updatePlayerInfo('DASH yükleme hatası');
+                console.error('DASH Error Details:', e);
+                if (e.error && e.error.code) {
+                    updatePlayerInfo(`DASH hatası: ${e.error.code} - ${e.error.message || 'Bilinmeyen hata'}`);
+                } else {
+                    updatePlayerInfo('DASH yükleme hatası - HLS\'e geçmeyi deneyin');
+                }
             });
+
+            // Initialize player
+            dashPlayer.initialize(video, dashUrl, false);
+
         } else {
             showError('DASH oynatıcı yüklenemedi.');
         }
     }
 
+    // DASH kalite seçici güncelle
+    function updateDASHQualitySelector() {
+        if (!dashPlayer) return;
+
+        const bitrateInfo = dashPlayer.getBitrateInfoListFor('video');
+        if (!bitrateInfo || bitrateInfo.length <= 1) return;
+
+        const select = document.getElementById('qualitySelect');
+        select.style.display = 'block';
+
+        // Kalite seçenekleri oluştur
+        let options = '<option value="-1">Otomatik</option>';
+        bitrateInfo.forEach((bitrate, index) => {
+            options += `<option value="${index}">${bitrate.height}p (${Math.round(bitrate.bitrate/1000)}kbps)</option>`;
+        });
+
+        select.innerHTML = options;
+
+        // Kalite değişimi için event listener
+        select.onchange = function() {
+            const selectedIndex = parseInt(this.value);
+            if (selectedIndex === -1) {
+                // Otomatik kalite
+                dashPlayer.updateSettings({
+                    'streaming': {
+                        'abr': {
+                            'autoSwitchBitrate': {
+                                'video': true
+                            }
+                        }
+                    }
+                });
+                updatePlayerInfo('DASH otomatik kalite aktif');
+            } else {
+                // Manuel kalite seçimi
+                dashPlayer.updateSettings({
+                    'streaming': {
+                        'abr': {
+                            'autoSwitchBitrate': {
+                                'video': false
+                            }
+                        }
+                    }
+                });
+                dashPlayer.setQualityFor('video', selectedIndex);
+                const quality = bitrateInfo[selectedIndex];
+                updatePlayerInfo(`DASH manuel kalite: ${quality.height}p`);
+            }
+        };
+    }
+
     // Update quality selector
+    // Güncellenmiş kalite seçici (HLS ve DASH için)
     function updateQualitySelector(levels) {
         const select = document.getElementById('qualitySelect');
-        select.style.display = levels && levels.length > 1 ? 'block' : 'none';
 
-        if (levels && levels.length > 1) {
-            select.innerHTML = '<option value="-1">Otomatik</option>' +
-                levels.map((level, index) =>
-                    `<option value="${index}">${level.height}p (${Math.round(level.bitrate/1000)}kbps)</option>`
-                ).join('');
+        if (currentFormat === 'hls') {
+            // HLS kalite seçimi
+            select.style.display = levels && levels.length > 1 ? 'block' : 'none';
 
-            select.onchange = function() {
-                if (hlsPlayer) {
-                    hlsPlayer.currentLevel = parseInt(this.value);
-                }
-            };
+            if (levels && levels.length > 1) {
+                select.innerHTML = '<option value="-1">Otomatik</option>' +
+                    levels.map((level, index) =>
+                        `<option value="${index}">${level.height}p (${Math.round(level.bitrate/1000)}kbps)</option>`
+                    ).join('');
+
+                select.onchange = function() {
+                    if (hlsPlayer) {
+                        hlsPlayer.currentLevel = parseInt(this.value);
+                        const levelText = this.value === '-1' ? 'Otomatik' : levels[this.value].height + 'p';
+                        updatePlayerInfo(`HLS kalite: ${levelText}`);
+                    }
+                };
+            }
+        } else if (currentFormat === 'dash') {
+            // DASH için ayrı güncelleme yapılıyor
+            updateDASHQualitySelector();
         }
     }
 
