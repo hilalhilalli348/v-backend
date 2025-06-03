@@ -171,6 +171,7 @@
             gap: 10px;
             margin-bottom: 20px;
             flex-wrap: wrap;
+            align-items: center;
         }
 
         .format-btn {
@@ -191,6 +192,19 @@
         .format-btn:hover {
             background: #667eea;
             color: white;
+        }
+
+        .quality-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #qualitySelect {
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            background: white;
         }
 
         #videoPlayer {
@@ -224,6 +238,28 @@
             margin: 20px 0;
         }
 
+        .player-info {
+            margin-top: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .debug-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: #e9ecef;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: monospace;
+            color: #495057;
+            max-height: 150px;
+            overflow-y: auto;
+            display: none;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 10px;
@@ -241,6 +277,11 @@
                 flex-direction: column;
                 align-items: flex-start;
                 gap: 10px;
+            }
+
+            .player-controls {
+                flex-direction: column;
+                align-items: stretch;
             }
         }
     </style>
@@ -285,14 +326,21 @@
         <div class="player-controls">
             <button class="format-btn active" id="hlsBtn" onclick="switchFormat('hls')">HLS</button>
             <button class="format-btn" id="dashBtn" onclick="switchFormat('dash')">DASH</button>
-            <select id="qualitySelect" style="display: none;">
-                <option value="">Kalite Seçin</option>
-            </select>
+            <div class="quality-control">
+                <label for="qualitySelect">Kalite:</label>
+                <select id="qualitySelect" style="display: none;">
+                    <option value="">Kalite Seçin</option>
+                </select>
+            </div>
+            <button onclick="toggleDebug()" style="padding: 8px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                Debug
+            </button>
         </div>
         <video id="videoPlayer" controls preload="metadata">
             Tarayıcınız video elementini desteklemiyor.
         </video>
-        <div id="playerInfo" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
+        <div id="playerInfo" class="player-info"></div>
+        <div id="debugInfo" class="debug-info"></div>
     </div>
 </div>
 
@@ -301,6 +349,7 @@
     let currentFormat = 'hls';
     let hlsPlayer = null;
     let dashPlayer = null;
+    let debugMode = false;
 
     // API Base URL
     const API_BASE = 'http://localhost:8080/api/videos';
@@ -309,7 +358,38 @@
     document.addEventListener('DOMContentLoaded', function() {
         loadVideoList();
         setupUploadForm();
+        setupVideoEventListeners();
     });
+
+    // Setup video element event listeners
+    function setupVideoEventListeners() {
+        const video = document.getElementById('videoPlayer');
+
+        video.addEventListener('loadstart', () => updatePlayerInfo('Video yükleniyor...'));
+        video.addEventListener('loadedmetadata', () => updatePlayerInfo('Video metadata yüklendi'));
+        video.addEventListener('canplay', () => updatePlayerInfo('Video oynatılabilir'));
+        video.addEventListener('playing', () => updatePlayerInfo('Video oynatılıyor'));
+        video.addEventListener('pause', () => updatePlayerInfo('Video duraklatıldı'));
+        video.addEventListener('ended', () => updatePlayerInfo('Video tamamlandı'));
+
+        video.addEventListener('error', (e) => {
+            const error = video.error;
+            let errorMessage = 'Video oynatma hatası';
+
+            if (error) {
+                switch(error.code) {
+                    case 1: errorMessage = 'Video yükleme iptal edildi'; break;
+                    case 2: errorMessage = 'Ağ hatası'; break;
+                    case 3: errorMessage = 'Video decode hatası'; break;
+                    case 4: errorMessage = 'Video formatı desteklenmiyor'; break;
+                }
+                errorMessage += ` (Kod: ${error.code})`;
+            }
+
+            updatePlayerInfo(errorMessage);
+            debugLog('Video Error:', error);
+        });
+    }
 
     // Setup upload form
     function setupUploadForm() {
@@ -408,6 +488,9 @@
             document.getElementById('currentVideoTitle').textContent = video.title;
             document.getElementById('playerSection').style.display = 'block';
 
+            // Reset player
+            cleanupPlayers();
+
             // Scroll to player
             document.getElementById('playerSection').scrollIntoView({ behavior: 'smooth' });
 
@@ -419,27 +502,39 @@
         }
     }
 
+    // Cleanup existing players
+    function cleanupPlayers() {
+        const video = document.getElementById('videoPlayer');
+
+        if (hlsPlayer) {
+            hlsPlayer.destroy();
+            hlsPlayer = null;
+        }
+
+        if (dashPlayer) {
+            dashPlayer.reset();
+            dashPlayer = null;
+        }
+
+        video.removeAttribute('src');
+        video.load();
+
+        // Hide quality selector
+        document.getElementById('qualitySelect').style.display = 'none';
+    }
+
     // Switch format
     function switchFormat(format) {
         if (!currentVideo) return;
 
         currentFormat = format;
+        debugLog('Switching to format:', format);
 
         // Update button states
         document.getElementById('hlsBtn').classList.toggle('active', format === 'hls');
         document.getElementById('dashBtn').classList.toggle('active', format === 'dash');
 
-        const video = document.getElementById('videoPlayer');
-
-        // Clean up existing players
-        if (hlsPlayer) {
-            hlsPlayer.destroy();
-            hlsPlayer = null;
-        }
-        if (dashPlayer) {
-            dashPlayer.reset();
-            dashPlayer = null;
-        }
+        cleanupPlayers();
 
         if (format === 'hls') {
             loadHLS();
@@ -453,87 +548,109 @@
         const video = document.getElementById('videoPlayer');
         const hlsUrl = `${API_BASE}/${currentVideo.id}/hls/playlist.m3u8`;
 
+        debugLog('Loading HLS URL:', hlsUrl);
+        updatePlayerInfo('HLS yükleniyor...');
+
         if (Hls.isSupported()) {
             hlsPlayer = new Hls({
-                debug: false,
+                debug: debugMode,
                 enableWorker: true,
-                lowLatencyMode: true
+                lowLatencyMode: false,
+                backBufferLength: 30
             });
 
             hlsPlayer.loadSource(hlsUrl);
             hlsPlayer.attachMedia(video);
 
-            hlsPlayer.on(Hls.Events.MANIFEST_PARSED, function() {
-                updatePlayerInfo('HLS formatı yüklendi');
-                updateQualitySelector(hlsPlayer.levels);
+            hlsPlayer.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
+                updatePlayerInfo('HLS formatı yüklendi - ' + data.levels.length + ' kalite seviyesi');
+                updateQualitySelector(data.levels);
+                debugLog('HLS Manifest parsed:', data);
+            });
+
+            hlsPlayer.on(Hls.Events.LEVEL_SWITCHED, function(event, data) {
+                const level = hlsPlayer.levels[data.level];
+                updatePlayerInfo(`HLS kalite: ${level.height}p (${Math.round(level.bitrate/1000)}kbps)`);
             });
 
             hlsPlayer.on(Hls.Events.ERROR, function(event, data) {
-                console.error('HLS Error:', data);
-                updatePlayerInfo('HLS yükleme hatası: ' + data.details);
+                debugLog('HLS Error:', data);
+
+                if (data.fatal) {
+                    switch(data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            updatePlayerInfo('HLS ağ hatası - yeniden denenecek');
+                            hlsPlayer.startLoad();
+                            break;
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            updatePlayerInfo('HLS medya hatası - düzeltilmeye çalışılıyor');
+                            hlsPlayer.recoverMediaError();
+                            break;
+                        default:
+                            updatePlayerInfo('HLS kritik hata: ' + data.details);
+                            break;
+                    }
+                } else {
+                    updatePlayerInfo('HLS uyarı: ' + data.details);
+                }
             });
 
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
             // Safari native support
             video.src = hlsUrl;
             updatePlayerInfo('Native HLS desteği kullanılıyor');
+            debugLog('Using native HLS support');
         } else {
             showError('HLS bu tarayıcıda desteklenmiyor.');
         }
     }
 
     // Load DASH
-    // Load DASH - İyileştirilmiş versiyon
     function loadDASH() {
         const video = document.getElementById('videoPlayer');
         const dashUrl = `${API_BASE}/${currentVideo.id}/dash/manifest.mpd`;
 
+        debugLog('Loading DASH URL:', dashUrl);
+        updatePlayerInfo('DASH yükleniyor...');
+
         if (typeof dashjs !== 'undefined') {
             dashPlayer = dashjs.MediaPlayer().create();
 
-            // DASH player ayarları
+            // Enhanced DASH player settings
             dashPlayer.updateSettings({
                 'streaming': {
-                    'abandonLoadTimeout': 10000,
-                    'wallclockTimeUpdateInterval': 100,
-                    'scheduleWhilePaused': false,
-                    'fastSwitchEnabled': true,
-                    'bufferTimeAtTopQuality': 20,
-                    'bufferTimeAtTopQualityLongForm': 60,
-                    'longFormContentDurationThreshold': 600,
-                    'stallThreshold': 0.5,
-                    'bufferToKeep': 20,
-                    'bufferPruningInterval': 10,
-                    'bufferTimeDefault': 12,
-                    'retryAttempts': {
-                        'MPD': 3,
-                        'XLinkExpansion': 1,
-                        'InitialRepresentation': 3,
-                        'MediaSegment': 3,
-                        'BitstreamSwitching': 3,
-                        'FragmentedText': 3,
-                        'other': 3
+                    'abr': {
+                        'autoSwitchBitrate': {
+                            'video': true,
+                            'audio': true
+                        },
+                        'maxBitrate': {
+                            'video': -1,
+                            'audio': -1
+                        }
                     },
-                    'retryIntervals': {
-                        'MPD': 500,
-                        'XLinkExpansion': 1000,
-                        'InitialRepresentation': 1000,
-                        'MediaSegment': 1000,
-                        'BitstreamSwitching': 1000,
-                        'FragmentedText': 1000,
-                        'other': 1000
+                    'buffer': {
+                        'bufferTimeAtTopQuality': 30,
+                        'bufferTimeAtTopQualityLongForm': 60,
+                        'initialBufferLevel': 20,
+                        'stableBufferTime': 40
+                    },
+                    'gaps': {
+                        'jumpGaps': true,
+                        'jumpLargeGaps': true,
+                        'smallGapLimit': 1.5
                     }
                 },
                 'debug': {
-                    'logLevel': dashjs.Debug.LOG_LEVEL_ERROR
+                    'logLevel': debugMode ? dashjs.Debug.LOG_LEVEL_DEBUG : dashjs.Debug.LOG_LEVEL_ERROR
                 }
             });
 
             // Event listeners
             dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, function() {
-                updatePlayerInfo('DASH formatı yüklendi - çoklu kalite destekleniyor');
+                updatePlayerInfo('DASH formatı yüklendi - adaptif kalite aktif');
+                debugLog('DASH stream initialized');
 
-                // DASH kalite seçimi için
                 setTimeout(() => {
                     updateDASHQualitySelector();
                 }, 1000);
@@ -541,41 +658,90 @@
 
             dashPlayer.on(dashjs.MediaPlayer.events.PLAYBACK_STARTED, function() {
                 updatePlayerInfo('DASH oynatma başladı');
-            });
-
-            dashPlayer.on(dashjs.MediaPlayer.events.PLAYBACK_SEEKING, function() {
-                updatePlayerInfo('DASH arama yapılıyor...');
-            });
-
-            dashPlayer.on(dashjs.MediaPlayer.events.PLAYBACK_SEEKED, function() {
-                updatePlayerInfo('DASH arama tamamlandı');
+                debugLog('DASH playback started');
             });
 
             dashPlayer.on(dashjs.MediaPlayer.events.QUALITY_CHANGE_RENDERED, function(e) {
                 if (e.mediaType === 'video') {
-                    const quality = dashPlayer.getBitrateInfoListFor('video')[e.newQuality];
-                    updatePlayerInfo(`DASH kalite değişti: ${quality.height}p (${Math.round(quality.bitrate/1000)}kbps)`);
+                    const bitrateList = dashPlayer.getBitrateInfoListFor('video');
+                    const quality = bitrateList[e.newQuality];
+                    if (quality) {
+                        updatePlayerInfo(`DASH kalite: ${quality.height}p (${Math.round(quality.bitrate/1000)}kbps)`);
+                        debugLog('DASH quality changed:', quality);
+                    }
                 }
             });
 
             dashPlayer.on(dashjs.MediaPlayer.events.ERROR, function(e) {
-                console.error('DASH Error Details:', e);
-                if (e.error && e.error.code) {
-                    updatePlayerInfo(`DASH hatası: ${e.error.code} - ${e.error.message || 'Bilinmeyen hata'}`);
-                } else {
-                    updatePlayerInfo('DASH yükleme hatası - HLS\'e geçmeyi deneyin');
+                debugLog('DASH Error Details:', e);
+
+                let errorMessage = 'DASH oynatma hatası';
+
+                if (e.error) {
+                    if (e.error.code === dashjs.MediaPlayer.errors.MANIFEST_LOADER_PARSING_FAILURE_ERROR_CODE) {
+                        errorMessage = 'DASH manifest parsing hatası';
+                    } else if (e.error.code === dashjs.MediaPlayer.errors.FRAGMENT_LOADER_LOADING_FAILURE_ERROR_CODE) {
+                        errorMessage = 'DASH segment yükleme hatası';
+                    } else if (e.error.code === dashjs.MediaPlayer.errors.MSE_ENDOFSTREAM_ERROR_CODE) {
+                        errorMessage = 'DASH medya hatası';
+                    } else if (e.error.message) {
+                        errorMessage = `DASH hatası: ${e.error.message}`;
+                    }
                 }
+
+                updatePlayerInfo(errorMessage + ' - HLS\'e geçmeyi deneyin');
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.BUFFER_EMPTY, function(e) {
+                debugLog('DASH buffer empty:', e.mediaType);
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.BUFFER_LOADED, function(e) {
+                debugLog('DASH buffer loaded:', e.mediaType);
             });
 
             // Initialize player
-            dashPlayer.initialize(video, dashUrl, false);
+            try {
+                dashPlayer.initialize(video, dashUrl, false);
+                debugLog('DASH player initialized with URL:', dashUrl);
+            } catch (error) {
+                console.error('DASH initialization error:', error);
+                updatePlayerInfo('DASH başlatma hatası - HLS\'e geçin');
+            }
 
         } else {
             showError('DASH oynatıcı yüklenemedi.');
         }
     }
 
-    // DASH kalite seçici güncelle
+    // Update HLS quality selector
+    function updateQualitySelector(levels) {
+        const select = document.getElementById('qualitySelect');
+
+        if (currentFormat === 'hls' && levels && levels.length > 1) {
+            select.style.display = 'block';
+
+            select.innerHTML = '<option value="-1">Otomatik</option>' +
+                levels.map((level, index) =>
+                    `<option value="${index}">${level.height}p (${Math.round(level.bitrate/1000)}kbps)</option>`
+                ).join('');
+
+            select.onchange = function() {
+                if (hlsPlayer) {
+                    const selectedLevel = parseInt(this.value);
+                    hlsPlayer.currentLevel = selectedLevel;
+
+                    const levelText = selectedLevel === -1 ? 'Otomatik' : levels[selectedLevel].height + 'p';
+                    updatePlayerInfo(`HLS kalite: ${levelText}`);
+                    debugLog('HLS quality changed to:', levelText);
+                }
+            };
+        } else {
+            select.style.display = 'none';
+        }
+    }
+
+    // Update DASH quality selector
     function updateDASHQualitySelector() {
         if (!dashPlayer) return;
 
@@ -585,7 +751,6 @@
         const select = document.getElementById('qualitySelect');
         select.style.display = 'block';
 
-        // Kalite seçenekleri oluştur
         let options = '<option value="-1">Otomatik</option>';
         bitrateInfo.forEach((bitrate, index) => {
             options += `<option value="${index}">${bitrate.height}p (${Math.round(bitrate.bitrate/1000)}kbps)</option>`;
@@ -593,11 +758,11 @@
 
         select.innerHTML = options;
 
-        // Kalite değişimi için event listener
         select.onchange = function() {
             const selectedIndex = parseInt(this.value);
+
             if (selectedIndex === -1) {
-                // Otomatik kalite
+                // Automatic quality
                 dashPlayer.updateSettings({
                     'streaming': {
                         'abr': {
@@ -608,8 +773,9 @@
                     }
                 });
                 updatePlayerInfo('DASH otomatik kalite aktif');
+                debugLog('DASH automatic quality enabled');
             } else {
-                // Manuel kalite seçimi
+                // Manual quality selection
                 dashPlayer.updateSettings({
                     'streaming': {
                         'abr': {
@@ -622,42 +788,41 @@
                 dashPlayer.setQualityFor('video', selectedIndex);
                 const quality = bitrateInfo[selectedIndex];
                 updatePlayerInfo(`DASH manuel kalite: ${quality.height}p`);
+                debugLog('DASH manual quality set to:', quality);
             }
         };
     }
 
-    // Update quality selector
-    // Güncellenmiş kalite seçici (HLS ve DASH için)
-    function updateQualitySelector(levels) {
-        const select = document.getElementById('qualitySelect');
+    // Update player info
+    function updatePlayerInfo(message) {
+        const info = document.getElementById('playerInfo');
+        info.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+    }
 
-        if (currentFormat === 'hls') {
-            // HLS kalite seçimi
-            select.style.display = levels && levels.length > 1 ? 'block' : 'none';
-
-            if (levels && levels.length > 1) {
-                select.innerHTML = '<option value="-1">Otomatik</option>' +
-                    levels.map((level, index) =>
-                        `<option value="${index}">${level.height}p (${Math.round(level.bitrate/1000)}kbps)</option>`
-                    ).join('');
-
-                select.onchange = function() {
-                    if (hlsPlayer) {
-                        hlsPlayer.currentLevel = parseInt(this.value);
-                        const levelText = this.value === '-1' ? 'Otomatik' : levels[this.value].height + 'p';
-                        updatePlayerInfo(`HLS kalite: ${levelText}`);
-                    }
-                };
-            }
-        } else if (currentFormat === 'dash') {
-            // DASH için ayrı güncelleme yapılıyor
-            updateDASHQualitySelector();
+    // Debug logging
+    function debugLog(...args) {
+        if (debugMode) {
+            console.log(...args);
+            const debugInfo = document.getElementById('debugInfo');
+            const logMessage = args.map(arg =>
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+            ).join(' ');
+            debugInfo.innerHTML += `[${new Date().toLocaleTimeString()}] ${logMessage}\n`;
+            debugInfo.scrollTop = debugInfo.scrollHeight;
         }
     }
 
-    // Update player info
-    function updatePlayerInfo(message) {
-        document.getElementById('playerInfo').textContent = message;
+    // Toggle debug mode
+    function toggleDebug() {
+        debugMode = !debugMode;
+        const debugInfo = document.getElementById('debugInfo');
+        debugInfo.style.display = debugMode ? 'block' : 'none';
+
+        if (!debugMode) {
+            debugInfo.innerHTML = '';
+        }
+
+        debugLog('Debug mode', debugMode ? 'enabled' : 'disabled');
     }
 
     // Utility functions
@@ -671,7 +836,7 @@
 
     function formatDuration(seconds) {
         const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
+        const secs = Math.floor(seconds % 60);
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     }
 
@@ -691,6 +856,7 @@
         errorDiv.textContent = message;
         document.body.appendChild(errorDiv);
         setTimeout(() => errorDiv.remove(), 5000);
+        debugLog('Error:', message);
     }
 
     function showSuccess(message) {
@@ -699,10 +865,62 @@
         successDiv.textContent = message;
         document.body.appendChild(successDiv);
         setTimeout(() => successDiv.remove(), 5000);
+        debugLog('Success:', message);
     }
 
     // Auto-refresh video list every 30 seconds
     setInterval(loadVideoList, 30000);
+
+    // Page visibility API to pause/resume when tab is hidden/visible
+    document.addEventListener('visibilitychange', function() {
+        const video = document.getElementById('videoPlayer');
+        if (document.hidden && !video.paused) {
+            video.pause();
+            debugLog('Video paused due to tab hidden');
+        }
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        const video = document.getElementById('videoPlayer');
+
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
+            return; // Don't handle shortcuts when typing in inputs
+        }
+
+        switch(e.key) {
+            case ' ': // Spacebar - play/pause
+                e.preventDefault();
+                if (video.paused) {
+                    video.play();
+                } else {
+                    video.pause();
+                }
+                break;
+            case 'f': // F key - fullscreen
+                if (video.requestFullscreen) {
+                    video.requestFullscreen();
+                }
+                break;
+            case 'm': // M key - mute/unmute
+                video.muted = !video.muted;
+                break;
+            case 'ArrowLeft': // Left arrow - seek backward 10s
+                video.currentTime = Math.max(0, video.currentTime - 10);
+                break;
+            case 'ArrowRight': // Right arrow - seek forward 10s
+                video.currentTime = Math.min(video.duration, video.currentTime + 10);
+                break;
+            case 'ArrowUp': // Up arrow - volume up
+                e.preventDefault();
+                video.volume = Math.min(1, video.volume + 0.1);
+                break;
+            case 'ArrowDown': // Down arrow - volume down
+                e.preventDefault();
+                video.volume = Math.max(0, video.volume - 0.1);
+                break;
+        }
+    });
 </script>
 </body>
 </html>

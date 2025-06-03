@@ -33,6 +33,15 @@ public class VideoProcessingService {
 
     private final VideoRepository videoRepository;
 
+    // TikTok tarzı kalite seviyeleri
+    private static final QualityLevel[] QUALITY_LEVELS = {
+            new QualityLevel("1080p", 1920, 1080, "3500k", "128k"),
+            new QualityLevel("720p", 1280, 720, "2500k", "128k"),
+            new QualityLevel("480p", 854, 480, "1500k", "96k"),    // Dinamik hesaplama ile güncellenecek
+            new QualityLevel("360p", 640, 360, "800k", "96k"),
+            new QualityLevel("240p", 426, 240, "400k", "64k")
+    };
+
     public VideoProcessingService(VideoRepository videoRepository) {
         this.videoRepository = videoRepository;
     }
@@ -40,7 +49,7 @@ public class VideoProcessingService {
     public Mono<Void> processVideo(Video video) {
         return Mono.fromRunnable(() -> {
             try {
-                logger.info("Starting TRUE CMAF processing for: {}", video.getFilename());
+                logger.info("Starting multi-quality CMAF processing for: {}", video.getFilename());
 
                 video.setStatus("PROCESSING");
                 videoRepository.save(video).subscribe();
@@ -51,25 +60,64 @@ public class VideoProcessingService {
 
                 Files.createDirectories(Paths.get(outputDir));
 
-                // Video süresini al
-                double videoDuration = getVideoDuration(inputPath);
-                logger.info("Video duration: {} seconds", videoDuration);
+                // Video bilgilerini al
+                VideoInfo videoInfo = getVideoInfo(inputPath);
+                logger.info("Video info - Duration: {}s, Resolution: {}x{}",
+                        videoInfo.duration, videoInfo.width, videoInfo.height);
 
-                // GERÇEK CMAF - tek ortak segmentler oluştur
-                generateTrueCMAF(inputPath, outputDir);
+                // Uygun kalite seviyelerini belirle
+                List<QualityLevel> targetQualities = determineTargetQualities(videoInfo);
+                logger.info("Target qualities: {}", targetQualities.stream()
+                        .map(q -> q.name).reduce((a, b) -> a + ", " + b).orElse("none"));
 
-                // Ortak segmentlerden HLS ve DASH manifest'leri oluştur
-                generateHLSManifest(outputDir, videoDuration);
-                generateDASHManifest(outputDir, videoDuration);
+                // Her kalite için CMAF segmentleri oluştur
+                List<QualityLevel> successfulQualities = new ArrayList<>();
+                for (QualityLevel quality : targetQualities) {
+                    try {
+                        logger.info("Starting encoding for quality: {}", quality.name);
+                        generateQualityCMAF(inputPath, outputDir, quality, videoInfo);
 
+                        // Başarılı encoding kontrolü
+                        String qualityDir = outputDir + "/" + quality.name;
+                        Path initFile = Paths.get(qualityDir, "init.mp4");
+                        Path playlistFile = Paths.get(qualityDir, "playlist.m3u8");
+
+                        if (Files.exists(initFile) && Files.exists(playlistFile)) {
+                            successfulQualities.add(quality);
+                            logger.info("Successfully completed encoding for quality: {}", quality.name);
+                        } else {
+                            logger.error("Encoding failed for quality: {} - Missing output files", quality.name);
+                            logger.error("Init file exists: {}, Playlist exists: {}",
+                                    Files.exists(initFile), Files.exists(playlistFile));
+                        }
+                    } catch (Exception e) {
+                        logger.error("Failed to encode quality: {} - Error: {}", quality.name, e.getMessage(), e);
+                        // Bu kaliteyi atla, diğerlerine devam et
+                        continue;
+                    }
+                }
+
+                // Sadece başarılı kaliteleri manifest'lerde kullan
+                if (successfulQualities.isEmpty()) {
+                    throw new RuntimeException("No qualities were successfully encoded!");
+                }
+
+                logger.info("Successfully encoded qualities: {}", successfulQualities.stream()
+                        .map(q -> q.name).reduce((a, b) -> a + ", " + b).orElse("none"));
+
+                // Master manifests oluştur
+                generateMasterHLSManifest(outputDir, successfulQualities, videoInfo);
+                generateMasterDASHManifest(outputDir, successfulQualities, videoInfo);
+
+                // Video entity güncelle
                 video.setStatus("READY");
                 video.setCmafPath(outputDir);
-                video.setHlsManifestPath(outputDir + "/playlist.m3u8");
-                video.setDashManifestPath(outputDir + "/manifest.mpd");
+                video.setHlsManifestPath(outputDir + "/master.m3u8");
+                video.setDashManifestPath(outputDir + "/master.mpd");
 
                 videoRepository.save(video).subscribe();
 
-                logger.info("TRUE CMAF processing completed for: {}", video.getFilename());
+                logger.info("Multi-quality CMAF processing completed for: {}", video.getFilename());
 
             } catch (Exception e) {
                 logger.error("Error processing video: {}", video.getFilename(), e);
@@ -79,15 +127,17 @@ public class VideoProcessingService {
         }).subscribeOn(Schedulers.boundedElastic()).then();
     }
 
-    private double getVideoDuration(String inputPath) throws IOException, InterruptedException {
-        String[] durationCommand = {
-                ffmpegPath,
-                "-i", inputPath,
-                "-f", "null",
-                "-"
+    private VideoInfo getVideoInfo(String inputPath) throws IOException, InterruptedException {
+        String[] probeCommand = {
+                ffmpegPath.replace("ffmpeg", "ffprobe"),
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_format",
+                "-show_streams",
+                inputPath
         };
 
-        ProcessBuilder processBuilder = new ProcessBuilder(durationCommand);
+        ProcessBuilder processBuilder = new ProcessBuilder(probeCommand);
         processBuilder.redirectErrorStream(true);
         Process process = processBuilder.start();
 
@@ -96,176 +146,308 @@ public class VideoProcessingService {
             String line;
             while ((line = reader.readLine()) != null) {
                 output.append(line).append("\n");
-                // Duration satırını ara: Duration: 00:01:23.45, start: 0.000000, bitrate: 1234 kb/s
-                if (line.contains("Duration:")) {
-                    String durationStr = line.split("Duration: ")[1].split(",")[0].trim();
-                    return parseDuration(durationStr);
-                }
             }
         }
 
         process.waitFor(10, TimeUnit.SECONDS);
-        return 0.0; // Varsayılan değer
-    }
 
-    private double parseDuration(String duration) {
-        // Format: HH:MM:SS.ms
-        String[] parts = duration.split(":");
-        if (parts.length == 3) {
-            double hours = Double.parseDouble(parts[0]);
-            double minutes = Double.parseDouble(parts[1]);
-            double seconds = Double.parseDouble(parts[2]);
-            return hours * 3600 + minutes * 60 + seconds;
+        String result = output.toString();
+        logger.debug("FFprobe raw output: {}", result);
+
+        // Duration parsing - format seviyesinden al
+        double duration = 0.0;
+        if (result.contains("\"duration\"")) {
+            try {
+                // İlk duration değerini al (genellikle format seviyesinden)
+                String durationMatch = result.split("\"duration\"\\s*:\\s*\"")[1].split("\"")[0];
+                duration = Double.parseDouble(durationMatch);
+            } catch (Exception e) {
+                logger.warn("Could not parse duration: {}", e.getMessage());
+            }
         }
-        return 0.0;
+
+        // Video stream bilgileri - video codec_type'ını ara
+        int width = 0, height = 0;
+
+        // JSON'u satır satır parse et ve video stream'i bul
+        String[] lines = result.split("\n");
+        boolean inVideoStream = false;
+
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
+
+            // Video stream başlangıcını tespit et
+            if (line.contains("\"codec_type\"") && line.contains("\"video\"")) {
+                inVideoStream = true;
+                logger.debug("Found video stream at line: {}", line);
+            }
+
+            // Video stream içindeyken width ve height ara
+            if (inVideoStream) {
+                if (line.contains("\"width\"")) {
+                    try {
+                        String widthStr = line.split("\"width\"\\s*:\\s*")[1].split("[,\\s}]")[0];
+                        width = Integer.parseInt(widthStr);
+                        logger.debug("Parsed width: {}", width);
+                    } catch (Exception e) {
+                        logger.warn("Could not parse width from line: {}", line);
+                    }
+                }
+
+                if (line.contains("\"height\"")) {
+                    try {
+                        String heightStr = line.split("\"height\"\\s*:\\s*")[1].split("[,\\s}]")[0];
+                        height = Integer.parseInt(heightStr);
+                        logger.debug("Parsed height: {}", height);
+                    } catch (Exception e) {
+                        logger.warn("Could not parse height from line: {}", line);
+                    }
+                }
+
+                // Video stream sona erdi (bir sonraki stream başladı veya streams array bitti)
+                if ((line.contains("\"codec_type\"") && !line.contains("\"video\"")) ||
+                        line.contains("}") && !line.contains("\"")) {
+                    break;
+                }
+            }
+        }
+
+        // Fallback: FFprobe basit format ile tekrar dene
+        if (width == 0 || height == 0) {
+            logger.warn("JSON parsing failed, trying simple ffprobe format");
+            String[] simpleProbeCommand = {
+                    ffmpegPath.replace("ffmpeg", "ffprobe"),
+                    "-v", "error",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height",
+                    "-of", "csv=s=x:p=0",
+                    inputPath
+            };
+
+            ProcessBuilder simpleBuilder = new ProcessBuilder(simpleProbeCommand);
+            Process simpleProcess = simpleBuilder.start();
+
+            try (BufferedReader simpleReader = new BufferedReader(new InputStreamReader(simpleProcess.getInputStream()))) {
+                String dimensionLine = simpleReader.readLine();
+                if (dimensionLine != null && dimensionLine.contains("x")) {
+                    String[] dimensions = dimensionLine.trim().split("x");
+                    if (dimensions.length == 2) {
+                        width = Integer.parseInt(dimensions[0]);
+                        height = Integer.parseInt(dimensions[1]);
+                        logger.info("Fallback parsing successful: {}x{}", width, height);
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("Fallback parsing also failed: {}", e.getMessage());
+            }
+
+            simpleProcess.waitFor(5, TimeUnit.SECONDS);
+        }
+
+        logger.info("Final parsed video info - Duration: {}s, Resolution: {}x{}", duration, width, height);
+
+        return new VideoInfo(duration, width, height);
     }
 
-    private void generateTrueCMAF(String inputPath, String outputDir) throws IOException, InterruptedException {
-        // HLS ile fragmented MP4 segmentleri oluştur (CMAF uyumlu)
+    private List<QualityLevel> determineTargetQualities(VideoInfo videoInfo) {
+        List<QualityLevel> targetQualities = new ArrayList<>();
+
+        // Orijinal çözünürlük temel alınarak uygun kaliteleri seç
+        int originalHeight = videoInfo.height;
+
+        logger.info("Original video resolution: {}x{}", videoInfo.width, originalHeight);
+
+        for (QualityLevel quality : QUALITY_LEVELS) {
+            // Orijinalden büyük kalite üretme
+            if (quality.height <= originalHeight) {
+                // Dinamik boyut hesaplama ile kaliteyi ayarla
+                QualityLevel adjustedQuality = calculateOptimalDimensions(quality, videoInfo);
+                targetQualities.add(adjustedQuality);
+                logger.info("Added quality: {} ({}x{} -> {}x{})",
+                        quality.name, quality.width, quality.height,
+                        adjustedQuality.width, adjustedQuality.height);
+            }
+        }
+
+        // TikTok stratejisi: Her zaman minimum 240p ve 360p olsun
+        if (targetQualities.isEmpty() || originalHeight < 360) {
+            // Çok düşük çözünürlüklü videolar için bile 240p ve 360p üret
+            targetQualities.clear();
+            targetQualities.add(calculateOptimalDimensions(
+                    new QualityLevel("360p", 640, 360, "800k", "96k"), videoInfo));
+            targetQualities.add(calculateOptimalDimensions(
+                    new QualityLevel("240p", 426, 240, "400k", "64k"), videoInfo));
+            logger.info("Low resolution video - forcing 360p and 240p encoding");
+        }
+
+        // En az 2 kalite garantisi
+        if (targetQualities.size() == 1 && originalHeight >= 480) {
+            // Tek kalite varsa ve video yeterince büyükse, bir alt kaliteyi de ekle
+            if (originalHeight >= 720) {
+                targetQualities.add(calculateOptimalDimensions(
+                        new QualityLevel("480p", 854, 480, "1500k", "96k"), videoInfo));
+            }
+            targetQualities.add(calculateOptimalDimensions(
+                    new QualityLevel("360p", 640, 360, "800k", "96k"), videoInfo));
+        }
+
+        logger.info("Final target qualities: {}", targetQualities.stream()
+                .map(q -> q.name + "(" + q.width + "x" + q.height + ")")
+                .reduce((a, b) -> a + ", " + b).orElse("none"));
+
+        return targetQualities;
+    }
+
+    /**
+     * Dinamik boyut hesaplama - aspect ratio koruyarak çift sayı garantisi
+     */
+    private QualityLevel calculateOptimalDimensions(QualityLevel targetQuality, VideoInfo videoInfo) {
+        // Orijinal aspect ratio hesapla
+        double originalAspectRatio = (double) videoInfo.width / videoInfo.height;
+
+        logger.debug("Calculating optimal dimensions for {}: target={}x{}, original={}x{}, aspect_ratio={}",
+                targetQuality.name, targetQuality.width, targetQuality.height,
+                videoInfo.width, videoInfo.height, originalAspectRatio);
+
+        // Hedef boyutları aspect ratio'ya göre ayarla
+        int newWidth = targetQuality.width;
+        int newHeight = targetQuality.height;
+
+        // Aspect ratio'yu koruyarak boyutları hesapla
+        int calculatedWidth = (int) Math.round(newHeight * originalAspectRatio);
+        int calculatedHeight = (int) Math.round(newWidth / originalAspectRatio);
+
+        // Hangi yaklaşımın daha uygun olduğunu belirle
+        if (calculatedWidth <= newWidth) {
+            // Yükseklik sabit, genişlik hesaplanır
+            newWidth = calculatedWidth;
+        } else {
+            // Genişlik sabit, yükseklik hesaplanır
+            newHeight = calculatedHeight;
+        }
+
+        // Çift sayı garantisi (H.264 gereksinimi)
+        newWidth = makeEven(newWidth);
+        newHeight = makeEven(newHeight);
+
+        // Minimum boyut kontrolü (çok küçük boyutları engelle)
+        if (newWidth < 240) newWidth = 240;
+        if (newHeight < 144) newHeight = 144;
+
+        // Maksimum boyut kontrolü (orijinalden büyük boyutları engelle)
+        if (newWidth > videoInfo.width) {
+            newWidth = makeEven(videoInfo.width);
+            newHeight = makeEven((int) Math.round(newWidth / originalAspectRatio));
+        }
+        if (newHeight > videoInfo.height) {
+            newHeight = makeEven(videoInfo.height);
+            newWidth = makeEven((int) Math.round(newHeight * originalAspectRatio));
+        }
+
+        logger.debug("Calculated optimal dimensions for {}: {}x{}",
+                targetQuality.name, newWidth, newHeight);
+
+        // Yeni boyutlarla kalite objesi oluştur
+        return new QualityLevel(
+                targetQuality.name,
+                newWidth,
+                newHeight,
+                targetQuality.videoBitrate,
+                targetQuality.audioBitrate
+        );
+    }
+
+    /**
+     * Sayıyı çift sayı yapar (H.264 gereksinimi)
+     */
+    private int makeEven(int number) {
+        return (number % 2 == 0) ? number : number - 1;
+    }
+
+    /**
+     * Dinamik scale filtresi oluşturma
+     */
+    private String calculateScaleFilter(QualityLevel quality, VideoInfo videoInfo) {
+        // Boyutlar zaten calculateOptimalDimensions ile hesaplanmış
+        return String.format("scale=%d:%d:flags=lanczos", quality.width, quality.height);
+    }
+
+    private void generateQualityCMAF(String inputPath, String outputDir, QualityLevel quality, VideoInfo videoInfo)
+            throws IOException, InterruptedException {
+
+        String qualityDir = outputDir + "/" + quality.name;
+        Files.createDirectories(Paths.get(qualityDir));
+
+        // Dinamik scale filtresi kullan
+        String scaleFilter = calculateScaleFilter(quality, videoInfo);
+
         String[] cmafCommand = {
                 ffmpegPath,
                 "-i", inputPath,
+                "-vf", scaleFilter,
                 "-c:v", "libx264",
                 "-c:a", "aac",
                 "-preset", "fast",
                 "-crf", "23",
+                "-b:v", quality.videoBitrate,
+                "-maxrate", quality.videoBitrate,
+                "-bufsize", calculateBufferSize(quality.videoBitrate),
+                "-b:a", quality.audioBitrate,
                 "-f", "hls",
                 "-hls_time", "4",
                 "-hls_playlist_type", "vod",
                 "-hls_segment_type", "fmp4",
                 "-hls_fmp4_init_filename", "init.mp4",
-                "-hls_segment_filename", outputDir + "/segment_%03d.m4s",
+                "-hls_segment_filename", qualityDir + "/segment_%03d.m4s",
                 "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
-                outputDir + "/ffmpeg_playlist.m3u8" // FFmpeg'in orijinal playlist'i
+                qualityDir + "/playlist.m3u8"
         };
 
-        logger.info("Generating TRUE CMAF segments (fragmented MP4)");
-        logger.info("FFmpeg command: {}", String.join(" ", cmafCommand));
+        logger.info("Generating {} CMAF segments with dimensions {}x{}",
+                quality.name, quality.width, quality.height);
+        logger.debug("FFmpeg command: {}", String.join(" ", cmafCommand));
         executeFFmpegCommand(cmafCommand);
 
-        // FFmpeg playlist'ini sakla - gerçek süreler burada
-        logger.info("FFmpeg generated playlist saved as ffmpeg_playlist.m3u8");
+        logger.info("Completed {} encoding", quality.name);
     }
 
-    private void generateHLSManifest(String outputDir, double videoDuration) throws IOException, InterruptedException {
-        // FFmpeg'in orijinal playlist'inden gerçek sürelerini oku
-        double[] segmentDurations = parseFFmpegPlaylist(outputDir);
-
-        if (segmentDurations.length == 0) {
-            logger.warn("Could not parse FFmpeg playlist, using calculated durations");
-            segmentDurations = getCalculatedSegmentDurations(outputDir, videoDuration);
-        }
-
-        StringBuilder playlist = new StringBuilder();
-        playlist.append("#EXTM3U\n");
-        playlist.append("#EXT-X-VERSION:7\n");
-        playlist.append("#EXT-X-TARGETDURATION:5\n");
-        playlist.append("#EXT-X-PLAYLIST-TYPE:VOD\n");
-        playlist.append("#EXT-X-MAP:URI=\"init.mp4\"\n");
-
-        double totalDuration = 0.0;
-        for (int i = 0; i < segmentDurations.length; i++) {
-            String segmentName = String.format("segment_%03d.m4s", i);
-            double duration = segmentDurations[i];
-
-            playlist.append(String.format("#EXTINF:%.6f,\n", duration));
-            playlist.append(segmentName).append("\n");
-            totalDuration += duration;
-        }
-
-        playlist.append("#EXT-X-ENDLIST\n");
-
-        // HLS playlist dosyasını yaz
-        Path playlistPath = Paths.get(outputDir, "playlist.m3u8");
-        Files.writeString(playlistPath, playlist.toString());
-
-        logger.info("Created HLS manifest with {} segments, total duration: {:.3f}s (original: {:.3f}s)",
-                segmentDurations.length, totalDuration, videoDuration);
-
-        // FFmpeg playlist'ini temizle
-        try {
-            Files.deleteIfExists(Paths.get(outputDir, "ffmpeg_playlist.m3u8"));
-        } catch (Exception e) {
-            logger.warn("Could not delete FFmpeg playlist: {}", e.getMessage());
-        }
+    private String calculateBufferSize(String bitrate) {
+        // Bitrate'in 2 katı buffer size (örn: 1500k -> 3000k)
+        int value = Integer.parseInt(bitrate.replaceAll("[^0-9]", ""));
+        return (value * 2) + "k";
     }
 
-    private double[] parseFFmpegPlaylist(String outputDir) throws IOException {
-        Path playlistPath = Paths.get(outputDir, "ffmpeg_playlist.m3u8");
-        if (!Files.exists(playlistPath)) {
-            logger.warn("FFmpeg playlist not found: {}", playlistPath);
-            return new double[0];
+    private void generateMasterHLSManifest(String outputDir, List<QualityLevel> qualities, VideoInfo videoInfo)
+            throws IOException {
+
+        StringBuilder masterPlaylist = new StringBuilder();
+        masterPlaylist.append("#EXTM3U\n");
+        masterPlaylist.append("#EXT-X-VERSION:7\n");
+
+        // Her kalite için stream bilgisi
+        for (QualityLevel quality : qualities) {
+            int bandwidth = parseBandwidth(quality.videoBitrate) + parseBandwidth(quality.audioBitrate);
+
+            masterPlaylist.append("#EXT-X-STREAM-INF:")
+                    .append("BANDWIDTH=").append(bandwidth)
+                    .append(",RESOLUTION=").append(quality.width).append("x").append(quality.height)
+                    .append(",CODECS=\"avc1.4d401f,mp4a.40.2\"")
+                    .append(",FRAME-RATE=25.000\n");
+            masterPlaylist.append(quality.name).append("/playlist.m3u8\n");
         }
 
-        List<Double> durations = new ArrayList<>();
-        List<String> lines = Files.readAllLines(playlistPath);
+        // Master playlist dosyasını yaz
+        Path masterPath = Paths.get(outputDir, "master.m3u8");
+        Files.writeString(masterPath, masterPlaylist.toString());
 
-        for (String line : lines) {
-            if (line.startsWith("#EXTINF:")) {
-                try {
-                    // #EXTINF:4.000000, formatından süreyi çıkar
-                    String durationStr = line.substring(8, line.indexOf(','));
-                    double duration = Double.parseDouble(durationStr);
-                    durations.add(duration);
-                } catch (Exception e) {
-                    logger.warn("Could not parse duration from line: {}", line);
-                }
-            }
-        }
-
-        logger.info("Parsed {} segment durations from FFmpeg playlist", durations.size());
-        return durations.stream().mapToDouble(Double::doubleValue).toArray();
+        logger.info("Created master HLS manifest with {} quality levels", qualities.size());
     }
 
-    private double[] getCalculatedSegmentDurations(String outputDir, double videoDuration) throws IOException {
-        // Fallback: Manuel hesaplama
-        Path outputPath = Paths.get(outputDir);
-        int segmentCount = 0;
+    private void generateMasterDASHManifest(String outputDir, List<QualityLevel> qualities, VideoInfo videoInfo)
+            throws IOException {
 
-        for (int i = 0; i < 1000; i++) {
-            String segmentName = String.format("segment_%03d.m4s", i);
-            if (Files.exists(outputPath.resolve(segmentName))) {
-                segmentCount++;
-            } else {
-                break;
-            }
-        }
+        String isoDuration = formatDurationToISO(videoInfo.duration);
 
-        double[] durations = new double[segmentCount];
-
-        for (int i = 0; i < segmentCount; i++) {
-            if (i == segmentCount - 1) {
-                // Son segment
-                double usedDuration = i * 4.0;
-                double remainingDuration = videoDuration - usedDuration;
-                durations[i] = Math.max(0.033333, Math.min(4.0, remainingDuration));
-            } else {
-                durations[i] = 4.0;
-            }
-        }
-
-        return durations;
-    }
-
-
-
-    private void generateDASHManifest(String outputDir, double videoDuration) throws IOException {
-        // FFmpeg playlist'inden gerçek sürelerini oku (eğer varsa)
-        double[] segmentDurations;
-        try {
-            segmentDurations = parseFFmpegPlaylist(outputDir);
-            if (segmentDurations.length == 0) {
-                segmentDurations = getCalculatedSegmentDurations(outputDir, videoDuration);
-            }
-        } catch (Exception e) {
-            logger.warn("Could not parse segment durations, using calculated values");
-            segmentDurations = getCalculatedSegmentDurations(outputDir, videoDuration);
-        }
-
-        // Video süresini ISO 8601 formatına çevir
-        String isoDuration = formatDurationToISO(videoDuration);
-
-        // DASH manifest - SegmentTimeline ile gerçek süreler
         StringBuilder manifest = new StringBuilder();
         manifest.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         manifest.append("<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" ");
@@ -274,35 +456,52 @@ public class VideoProcessingService {
         manifest.append("profiles=\"urn:mpeg:dash:profile:isoff-main:2011\">\n");
         manifest.append("  <Period>\n");
 
+        // Video AdaptationSet
         manifest.append("    <AdaptationSet mimeType=\"video/mp4\" ");
-        manifest.append("codecs=\"avc1.4d401f,mp4a.40.2\" ");
-        manifest.append("width=\"720\" height=\"1280\" ");
-        manifest.append("frameRate=\"25\" ");
+        manifest.append("codecs=\"avc1.4d401f\" ");
         manifest.append("segmentAlignment=\"true\" ");
         manifest.append("startWithSAP=\"1\">\n");
 
-        manifest.append("      <Representation id=\"muxed\" ");
-        manifest.append("bandwidth=\"1833000\" ");
-        manifest.append("width=\"720\" height=\"1280\">\n");
+        // Her kalite için Representation
+        for (int i = 0; i < qualities.size(); i++) {
+            QualityLevel quality = qualities.get(i);
+            int bandwidth = parseBandwidth(quality.videoBitrate);
 
-        // SegmentTimeline ile her segmentin gerçek süresi
-        manifest.append("        <SegmentTemplate ");
-        manifest.append("timescale=\"1000\" ");
-        manifest.append("initialization=\"init.mp4\" ");
-        manifest.append("media=\"segment_$Number%03d$.m4s\" ");
-        manifest.append("startNumber=\"0\">\n");
+            manifest.append("      <Representation id=\"video").append(i).append("\" ");
+            manifest.append("bandwidth=\"").append(bandwidth).append("\" ");
+            manifest.append("width=\"").append(quality.width).append("\" ");
+            manifest.append("height=\"").append(quality.height).append("\">\n");
 
-        manifest.append("          <SegmentTimeline>\n");
+            manifest.append("        <SegmentTemplate ");
+            manifest.append("timescale=\"1000\" ");
+            manifest.append("initialization=\"").append(quality.name).append("/init.mp4\" ");
+            manifest.append("media=\"").append(quality.name).append("/segment_$Number%03d$.m4s\" ");
+            manifest.append("duration=\"4000\" ");
+            manifest.append("startNumber=\"0\"/>\n");
 
-        long currentTime = 0;
-        for (int i = 0; i < segmentDurations.length; i++) {
-            long durationMs = Math.round(segmentDurations[i] * 1000);
-            manifest.append("            <S t=\"").append(currentTime).append("\" d=\"").append(durationMs).append("\"/>\n");
-            currentTime += durationMs;
+            manifest.append("      </Representation>\n");
         }
 
-        manifest.append("          </SegmentTimeline>\n");
-        manifest.append("        </SegmentTemplate>\n");
+        manifest.append("    </AdaptationSet>\n");
+
+        // Audio AdaptationSet (tek kalite)
+        QualityLevel firstQuality = qualities.get(0);
+        int audioBandwidth = parseBandwidth(firstQuality.audioBitrate);
+
+        manifest.append("    <AdaptationSet mimeType=\"audio/mp4\" ");
+        manifest.append("codecs=\"mp4a.40.2\" ");
+        manifest.append("segmentAlignment=\"true\" ");
+        manifest.append("startWithSAP=\"1\">\n");
+
+        manifest.append("      <Representation id=\"audio0\" ");
+        manifest.append("bandwidth=\"").append(audioBandwidth).append("\">\n");
+
+        manifest.append("        <SegmentTemplate ");
+        manifest.append("timescale=\"1000\" ");
+        manifest.append("initialization=\"").append(firstQuality.name).append("/init.mp4\" ");
+        manifest.append("media=\"").append(firstQuality.name).append("/segment_$Number%03d$.m4s\" ");
+        manifest.append("duration=\"4000\" ");
+        manifest.append("startNumber=\"0\"/>\n");
 
         manifest.append("      </Representation>\n");
         manifest.append("    </AdaptationSet>\n");
@@ -311,12 +510,16 @@ public class VideoProcessingService {
         manifest.append("</MPD>\n");
 
         // DASH manifest dosyasını yaz
-        Path manifestPath = Paths.get(outputDir, "manifest.mpd");
+        Path manifestPath = Paths.get(outputDir, "master.mpd");
         Files.writeString(manifestPath, manifest.toString());
 
-        double totalDuration = Arrays.stream(segmentDurations).sum();
-        logger.info("Created DASH manifest with {} segments, total duration: {:.3f}s",
-                segmentDurations.length, totalDuration);
+        logger.info("Created master DASH manifest with {} quality levels", qualities.size());
+    }
+
+    private int parseBandwidth(String bitrate) {
+        // "1500k" -> 1500000
+        int value = Integer.parseInt(bitrate.replaceAll("[^0-9]", ""));
+        return value * 1000;
     }
 
     private String formatDurationToISO(double seconds) {
@@ -339,6 +542,8 @@ public class VideoProcessingService {
     }
 
     private void executeFFmpegCommand(String[] command) throws IOException, InterruptedException {
+        logger.info("Executing FFmpeg command: {}", String.join(" ", command));
+
         ProcessBuilder processBuilder = new ProcessBuilder(command);
         processBuilder.redirectErrorStream(true);
 
@@ -350,20 +555,62 @@ public class VideoProcessingService {
             while ((line = reader.readLine()) != null) {
                 logger.debug("FFmpeg: {}", line);
                 output.append(line).append("\n");
+
+                // Error detection
+                if (line.contains("Error") || line.contains("Invalid") || line.contains("failed")) {
+                    logger.warn("FFmpeg potential error: {}", line);
+                }
             }
         }
 
-        boolean finished = process.waitFor(30, TimeUnit.MINUTES);
+        boolean finished = process.waitFor(60, TimeUnit.MINUTES);
         if (!finished) {
             process.destroyForcibly();
-            throw new RuntimeException("FFmpeg process timed out");
+            logger.error("FFmpeg command that timed out: {}", String.join(" ", command));
+            throw new RuntimeException("FFmpeg process timed out after 60 minutes");
         }
 
-        if (process.exitValue() != 0) {
+        int exitCode = process.exitValue();
+        logger.info("FFmpeg completed with exit code: {}", exitCode);
+
+        if (exitCode != 0) {
+            logger.error("FFmpeg failed with exit code: {}", exitCode);
+            logger.error("FFmpeg command: {}", String.join(" ", command));
             logger.error("FFmpeg output: {}", output.toString());
-            throw new RuntimeException("FFmpeg process failed with exit code: " + process.exitValue());
+            throw new RuntimeException("FFmpeg process failed with exit code: " + exitCode);
         }
 
         logger.info("FFmpeg completed successfully");
     }
+
+    // Helper classes
+    private static class QualityLevel {
+        final String name;
+        final int width;
+        final int height;
+        final String videoBitrate;
+        final String audioBitrate;
+
+        QualityLevel(String name, int width, int height, String videoBitrate, String audioBitrate) {
+            this.name = name;
+            this.width = width;
+            this.height = height;
+            this.videoBitrate = videoBitrate;
+            this.audioBitrate = audioBitrate;
+        }
+    }
+
+    private static class VideoInfo {
+        final double duration;
+        final int width;
+        final int height;
+
+        VideoInfo(double duration, int width, int height) {
+            this.duration = duration;
+            this.width = width;
+            this.height = height;
+        }
+    }
 }
+
+
