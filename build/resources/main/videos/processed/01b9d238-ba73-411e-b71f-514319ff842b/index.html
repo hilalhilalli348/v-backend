@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Video.js CMAF Player</title>
+    <link href="https://vjs.zencdn.net/8.9.0/video-js.css" rel="stylesheet" />
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #111;
+            color: #fff;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            max-width: 720px;
+            margin: auto;
+        }
+        .input-group {
+            margin: 15px 0;
+        }
+        input, select, button {
+            padding: 10px;
+            font-size: 16px;
+            width: 100%;
+            margin-top: 5px;
+        }
+        video {
+            margin-top: 20px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📽️ CMAF Video Player</h1>
+
+    <div class="input-group">
+        <label for="exampleSelect">Örnek Seç:</label>
+        <select id="exampleSelect">
+            <option value="">— Manuel URL kullan —</option>
+            <option value="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8">HLS Örneği</option>
+            <option value="https://dash.akamaized.net/envivio/EnvivioDash3/manifest.mpd">DASH Örneği</option>
+        </select>
+    </div>
+
+    <div class="input-group">
+        <label for="urlInput">Manifest URL (.m3u8 / .mpd):</label>
+        <input type="text" id="urlInput" placeholder="https://..." />
+    </div>
+
+    <div class="input-group">
+        <button onclick="loadVideo()">▶️ Videoyu Yükle</button>
+    </div>
+
+    <video
+            id="my-video"
+            class="video-js vjs-default-skin"
+            controls
+            preload="auto"
+            width="640"
+            height="360"
+            data-setup='{}'>
+        <source id="videoSource" src="" type="">
+        Tarayıcınız video etiketini desteklemiyor.
+    </video>
+</div>
+
+<!-- Video.js -->
+<script src="https://vjs.zencdn.net/8.9.0/video.min.js"></script>
+<!-- DASH.js için katkı -->
+<script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/videojs-contrib-dash@2.11.0/dist/videojs-dash.min.js"></script>
+<!-- HLS için -->
+<script src="https://cdn.jsdelivr.net/npm/videojs-http-streaming@2.13.3/dist/videojs-http-streaming.min.js"></script>
+
+<script>
+    const player = videojs('my-video');
+
+    document.getElementById('exampleSelect').addEventListener('change', function () {
+        document.getElementById('urlInput').value = this.value;
+    });
+
+    function loadVideo() {
+        const url = document.getElementById('urlInput').value.trim();
+        if (!url) {
+            alert('Lütfen bir manifest URL girin.');
+            return;
+        }
+
+        const isHLS = url.includes('.m3u8');
+        const isDASH = url.includes('.mpd');
+
+        if (!isHLS && !isDASH) {
+            alert('Yalnızca .m3u8 (HLS) veya .mpd (DASH) dosyaları destekleniyor.');
+            return;
+        }
+
+        const type = isHLS ? 'application/x-mpegURL' : 'application/dash+xml';
+
+        player.src({ src: url, type });
+        player.play();
+    }
+</script>
+</body>
+</html>

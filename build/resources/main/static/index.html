@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Streaming Platform</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dashjs/4.7.2/dash.all.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .upload-section {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .upload-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-weight: bold;
+            color: #555;
+        }
+
+        input[type="text"], input[type="file"] {
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus, input[type="file"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .upload-btn {
+            padding: 15px 30px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+
+        .upload-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .video-list {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .video-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            transition: background-color 0.2s;
+        }
+
+        .video-item:hover {
+            background-color: #f8f9fa;
+        }
+
+        .video-info h3 {
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        .video-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .status-ready { background: #d4edda; color: #155724; }
+        .status-processing { background: #fff3cd; color: #856404; }
+        .status-uploading { background: #cce7ff; color: #004085; }
+        .status-error { background: #f8d7da; color: #721c24; }
+
+        .play-btn {
+            padding: 8px 16px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+
+        .play-btn:hover {
+            background: #218838;
+        }
+
+        .play-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+
+        .player-section {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            display: none;
+        }
+
+        .player-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .format-btn {
+            padding: 8px 16px;
+            border: 2px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .format-btn.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .format-btn:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .quality-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #qualitySelect {
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            background: white;
+        }
+
+        #videoPlayer {
+            width: 100%;
+            max-width: 800px;
+            border-radius: 8px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .error {
+            color: #dc3545;
+            text-align: center;
+            padding: 20px;
+            background: #f8d7da;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .success {
+            color: #155724;
+            text-align: center;
+            padding: 20px;
+            background: #d4edda;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        .player-info {
+            margin-top: 15px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .debug-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: #e9ecef;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: monospace;
+            color: #495057;
+            max-height: 150px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+
+            .header h1 {
+                font-size: 2em;
+            }
+
+            .upload-section, .video-list, .player-section {
+                padding: 20px;
+            }
+
+            .video-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+
+            .player-controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>🎥 Video Streaming Platform</h1>
+        <p>HLS ve DASH destekli video yükleme ve izleme platformu</p>
+    </div>
+
+    <!-- Upload Section -->
+    <div class="upload-section">
+        <h2>Video Yükle</h2>
+        <form id="uploadForm" class="upload-form">
+            <div class="form-group">
+                <label for="videoTitle">Video Başlığı:</label>
+                <input type="text" id="videoTitle" name="title" required placeholder="Video başlığını girin...">
+            </div>
+            <div class="form-group">
+                <label for="videoFile">Video Dosyası:</label>
+                <input type="file" id="videoFile" name="file" accept="video/*" required>
+            </div>
+            <button type="submit" class="upload-btn" id="uploadBtn">Video Yükle</button>
+        </form>
+        <div id="uploadProgress" style="display: none;" class="loading">
+            Yükleniyor... Lütfen bekleyin.
+        </div>
+    </div>
+
+    <!-- Video List Section -->
+    <div class="video-list">
+        <h2>Videolar</h2>
+        <div id="videoList">
+            <div class="loading">Videolar yükleniyor...</div>
+        </div>
+    </div>
+
+    <!-- Player Section -->
+    <div class="player-section" id="playerSection">
+        <h2 id="currentVideoTitle">Video Oynatıcı</h2>
+        <div class="player-controls">
+            <button class="format-btn active" id="hlsBtn" onclick="switchFormat('hls')">HLS</button>
+            <button class="format-btn" id="dashBtn" onclick="switchFormat('dash')">DASH</button>
+            <div class="quality-control">
+                <label for="qualitySelect">Kalite:</label>
+                <select id="qualitySelect" style="display: none;">
+                    <option value="">Kalite Seçin</option>
+                </select>
+            </div>
+            <button onclick="toggleDebug()" style="padding: 8px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                Debug
+            </button>
+        </div>
+        <video id="videoPlayer" controls preload="metadata">
+            Tarayıcınız video elementini desteklemiyor.
+        </video>
+        <div id="playerInfo" class="player-info"></div>
+        <div id="debugInfo" class="debug-info"></div>
+    </div>
+</div>
+
+<script>
+    let currentVideo = null;
+    let currentFormat = 'hls';
+    let hlsPlayer = null;
+    let dashPlayer = null;
+    let debugMode = false;
+
+    // API Base URL
+    const API_BASE = 'http://localhost:8080/api/videos';
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', function() {
+        loadVideoList();
+        setupUploadForm();
+        setupVideoEventListeners();
+    });
+
+    // Setup video element event listeners
+    function setupVideoEventListeners() {
+        const video = document.getElementById('videoPlayer');
+
+        video.addEventListener('loadstart', () => updatePlayerInfo('Video yükleniyor...'));
+        video.addEventListener('loadedmetadata', () => updatePlayerInfo('Video metadata yüklendi'));
+        video.addEventListener('canplay', () => updatePlayerInfo('Video oynatılabilir'));
+        video.addEventListener('playing', () => updatePlayerInfo('Video oynatılıyor'));
+        video.addEventListener('pause', () => updatePlayerInfo('Video duraklatıldı'));
+        video.addEventListener('ended', () => updatePlayerInfo('Video tamamlandı'));
+
+        video.addEventListener('error', (e) => {
+            const error = video.error;
+            let errorMessage = 'Video oynatma hatası';
+
+            if (error) {
+                switch(error.code) {
+                    case 1: errorMessage = 'Video yükleme iptal edildi'; break;
+                    case 2: errorMessage = 'Ağ hatası'; break;
+                    case 3: errorMessage = 'Video decode hatası'; break;
+                    case 4: errorMessage = 'Video formatı desteklenmiyor'; break;
+                }
+                errorMessage += ` (Kod: ${error.code})`;
+            }
+
+            updatePlayerInfo(errorMessage);
+            debugLog('Video Error:', error);
+        });
+    }
+
+    // Setup upload form
+    function setupUploadForm() {
+        const form = document.getElementById('uploadForm');
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const title = document.getElementById('videoTitle').value;
+            const file = document.getElementById('videoFile').files[0];
+
+            if (!title || !file) {
+                showError('Lütfen tüm alanları doldurun.');
+                return;
+            }
+
+            const uploadBtn = document.getElementById('uploadBtn');
+            const uploadProgress = document.getElementById('uploadProgress');
+
+            uploadBtn.disabled = true;
+            uploadProgress.style.display = 'block';
+
+            try {
+                const formData = new FormData();
+                formData.append('title', title);
+                formData.append('file', file);
+
+                const response = await fetch(`${API_BASE}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    showSuccess('Video başarıyla yüklendi! İşleme alındı.');
+                    form.reset();
+                    loadVideoList();
+                } else {
+                    throw new Error('Upload failed');
+                }
+            } catch (error) {
+                showError('Video yükleme hatası: ' + error.message);
+            } finally {
+                uploadBtn.disabled = false;
+                uploadProgress.style.display = 'none';
+            }
+        });
+    }
+
+    // Load video list
+    async function loadVideoList() {
+        try {
+            const response = await fetch(API_BASE);
+            const videos = await response.json();
+
+            const videoList = document.getElementById('videoList');
+
+            if (videos.length === 0) {
+                videoList.innerHTML = '<div class="loading">Henüz video yüklenmemiş.</div>';
+                return;
+            }
+
+            videoList.innerHTML = videos.map(video => `
+                    <div class="video-item">
+                        <div class="video-info">
+                            <h3>${video.title}</h3>
+                            <p style="color: #666; font-size: 14px;">
+                                ${video.originalFilename} • ${formatFileSize(video.fileSize)}
+                                ${video.duration ? ` • ${formatDuration(video.duration)}` : ''}
+                            </p>
+                            <span class="video-status status-${video.status.toLowerCase()}">${getStatusText(video.status)}</span>
+                        </div>
+                        <button class="play-btn" onclick="playVideo(${video.id})"
+                                ${video.status !== 'READY' ? 'disabled' : ''}>
+                            ${video.status === 'READY' ? 'Oynat' : 'Bekleyin'}
+                        </button>
+                    </div>
+                `).join('');
+        } catch (error) {
+            document.getElementById('videoList').innerHTML =
+                '<div class="error">Video listesi yüklenemedi.</div>';
+        }
+    }
+
+    // Play video
+    async function playVideo(videoId) {
+        try {
+            const response = await fetch(`${API_BASE}/${videoId}`);
+            const video = await response.json();
+
+            if (video.status !== 'READY') {
+                showError('Video henüz hazır değil.');
+                return;
+            }
+
+            currentVideo = video;
+            document.getElementById('currentVideoTitle').textContent = video.title;
+            document.getElementById('playerSection').style.display = 'block';
+
+            // Reset player
+            cleanupPlayers();
+
+            // Scroll to player
+            document.getElementById('playerSection').scrollIntoView({ behavior: 'smooth' });
+
+            // Start with HLS
+            switchFormat('hls');
+
+        } catch (error) {
+            showError('Video oynatma hatası: ' + error.message);
+        }
+    }
+
+    // Cleanup existing players
+    function cleanupPlayers() {
+        const video = document.getElementById('videoPlayer');
+
+        if (hlsPlayer) {
+            hlsPlayer.destroy();
+            hlsPlayer = null;
+        }
+
+        if (dashPlayer) {
+            dashPlayer.reset();
+            dashPlayer = null;
+        }
+
+        video.removeAttribute('src');
+        video.load();
+
+        // Hide quality selector
+        document.getElementById('qualitySelect').style.display = 'none';
+    }
+
+    // Switch format
+    function switchFormat(format) {
+        if (!currentVideo) return;
+
+        currentFormat = format;
+        debugLog('Switching to format:', format);
+
+        // Update button states
+        document.getElementById('hlsBtn').classList.toggle('active', format === 'hls');
+        document.getElementById('dashBtn').classList.toggle('active', format === 'dash');
+
+        cleanupPlayers();
+
+        if (format === 'hls') {
+            loadHLS();
+        } else if (format === 'dash') {
+            loadDASH();
+        }
+    }
+
+    // Load HLS
+    function loadHLS() {
+        const video = document.getElementById('videoPlayer');
+        const hlsUrl = `${API_BASE}/${currentVideo.id}/hls/master.m3u8`; // CORRECTED URL
+
+        debugLog('Loading HLS URL:', hlsUrl);
+        updatePlayerInfo('HLS yükleniyor...');
+
+        if (Hls.isSupported()) {
+            hlsPlayer = new Hls({
+                debug: debugMode,
+                enableWorker: true,
+                lowLatencyMode: false,
+                backBufferLength: 30
+            });
+
+            hlsPlayer.loadSource(hlsUrl);
+            hlsPlayer.attachMedia(video);
+
+            hlsPlayer.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
+                updatePlayerInfo('HLS formatı yüklendi - ' + data.levels.length + ' kalite seviyesi');
+                updateQualitySelector(data.levels);
+                debugLog('HLS Manifest parsed:', data);
+            });
+
+            hlsPlayer.on(Hls.Events.LEVEL_SWITCHED, function(event, data) {
+                const level = hlsPlayer.levels[data.level];
+                updatePlayerInfo(`HLS kalite: ${level.height}p (${Math.round(level.bitrate/1000)}kbps)`);
+            });
+
+            hlsPlayer.on(Hls.Events.ERROR, function(event, data) {
+                debugLog('HLS Error:', data);
+
+                if (data.fatal) {
+                    switch(data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            updatePlayerInfo('HLS ağ hatası - yeniden denenecek');
+                            hlsPlayer.startLoad();
+                            break;
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            updatePlayerInfo('HLS medya hatası - düzeltilmeye çalışılıyor');
+                            hlsPlayer.recoverMediaError();
+                            break;
+                        default:
+                            updatePlayerInfo('HLS kritik hata: ' + data.details);
+                            break;
+                    }
+                } else {
+                    updatePlayerInfo('HLS uyarı: ' + data.details);
+                }
+            });
+
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            // Safari native support
+            video.src = hlsUrl;
+            updatePlayerInfo('Native HLS desteği kullanılıyor');
+            debugLog('Using native HLS support');
+        } else {
+            showError('HLS bu tarayıcıda desteklenmiyor.');
+        }
+    }
+
+    // Load DASH
+    function loadDASH() {
+        const video = document.getElementById('videoPlayer');
+        const dashUrl = `${API_BASE}/${currentVideo.id}/dash/manifest.mpd`;
+
+        debugLog('Loading DASH URL:', dashUrl);
+        updatePlayerInfo('DASH yükleniyor...');
+
+        if (typeof dashjs !== 'undefined') {
+            dashPlayer = dashjs.MediaPlayer().create();
+
+            // Enhanced DASH player settings
+            dashPlayer.updateSettings({
+                'streaming': {
+                    'abr': {
+                        'autoSwitchBitrate': {
+                            'video': true,
+                            'audio': true
+                        },
+                        'maxBitrate': {
+                            'video': -1,
+                            'audio': -1
+                        }
+                    },
+                    'buffer': {
+                        'bufferTimeAtTopQuality': 30,
+                        'bufferTimeAtTopQualityLongForm': 60,
+                        'initialBufferLevel': 20,
+                        'stableBufferTime': 40
+                    },
+                    'gaps': {
+                        'jumpGaps': true,
+                        'jumpLargeGaps': true,
+                        'smallGapLimit': 1.5
+                    }
+                },
+                'debug': {
+                    'logLevel': debugMode ? dashjs.Debug.LOG_LEVEL_DEBUG : dashjs.Debug.LOG_LEVEL_ERROR
+                }
+            });
+
+            // Event listeners
+            dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, function() {
+                updatePlayerInfo('DASH formatı yüklendi - adaptif kalite aktif');
+                debugLog('DASH stream initialized');
+
+                setTimeout(() => {
+                    updateDASHQualitySelector();
+                }, 1000);
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.PLAYBACK_STARTED, function() {
+                updatePlayerInfo('DASH oynatma başladı');
+                debugLog('DASH playback started');
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.QUALITY_CHANGE_RENDERED, function(e) {
+                if (e.mediaType === 'video') {
+                    const bitrateList = dashPlayer.getBitrateInfoListFor('video');
+                    const quality = bitrateList[e.newQuality];
+                    if (quality) {
+                        updatePlayerInfo(`DASH kalite: ${quality.height}p (${Math.round(quality.bitrate/1000)}kbps)`);
+                        debugLog('DASH quality changed:', quality);
+                    }
+                }
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.ERROR, function(e) {
+                debugLog('DASH Error Details:', e);
+
+                let errorMessage = 'DASH oynatma hatası';
+
+                if (e.error) {
+                    if (e.error.code === dashjs.MediaPlayer.errors.MANIFEST_LOADER_PARSING_FAILURE_ERROR_CODE) {
+                        errorMessage = 'DASH manifest parsing hatası';
+                    } else if (e.error.code === dashjs.MediaPlayer.errors.FRAGMENT_LOADER_LOADING_FAILURE_ERROR_CODE) {
+                        errorMessage = 'DASH segment yükleme hatası';
+                    } else if (e.error.code === dashjs.MediaPlayer.errors.MSE_ENDOFSTREAM_ERROR_CODE) {
+                        errorMessage = 'DASH medya hatası';
+                    } else if (e.error.message) {
+                        errorMessage = `DASH hatası: ${e.error.message}`;
+                    }
+                }
+
+                updatePlayerInfo(errorMessage + ' - HLS\'e geçmeyi deneyin');
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.BUFFER_EMPTY, function(e) {
+                debugLog('DASH buffer empty:', e.mediaType);
+            });
+
+            dashPlayer.on(dashjs.MediaPlayer.events.BUFFER_LOADED, function(e) {
+                debugLog('DASH buffer loaded:', e.mediaType);
+            });
+
+            // Initialize player
+            try {
+                dashPlayer.initialize(video, dashUrl, false);
+                debugLog('DASH player initialized with URL:', dashUrl);
+            } catch (error) {
+                console.error('DASH initialization error:', error);
+                updatePlayerInfo('DASH başlatma hatası - HLS\'e geçin');
+            }
+
+        } else {
+            showError('DASH oynatıcı yüklenemedi.');
+        }
+    }
+
+    // Update HLS quality selector
+    function updateQualitySelector(levels) {
+        const select = document.getElementById('qualitySelect');
+
+        if (currentFormat === 'hls' && levels && levels.length > 1) {
+            select.style.display = 'block';
+
+            select.innerHTML = '<option value="-1">Otomatik</option>' +
+                levels.map((level, index) =>
+                    `<option value="${index}">${level.height}p (${Math.round(level.bitrate/1000)}kbps)</option>`
+                ).join('');
+
+            select.onchange = function() {
+                if (hlsPlayer) {
+                    const selectedLevel = parseInt(this.value);
+                    hlsPlayer.currentLevel = selectedLevel;
+
+                    const levelText = selectedLevel === -1 ? 'Otomatik' : levels[selectedLevel].height + 'p';
+                    updatePlayerInfo(`HLS kalite: ${levelText}`);
+                    debugLog('HLS quality changed to:', levelText);
+                }
+            };
+        } else {
+            select.style.display = 'none';
+        }
+    }
+
+    // Update DASH quality selector
+    function updateDASHQualitySelector() {
+        if (!dashPlayer) return;
+
+        const bitrateInfo = dashPlayer.getBitrateInfoListFor('video');
+        if (!bitrateInfo || bitrateInfo.length <= 1) return;
+
+        const select = document.getElementById('qualitySelect');
+        select.style.display = 'block';
+
+        let options = '<option value="-1">Otomatik</option>';
+        bitrateInfo.forEach((bitrate, index) => {
+            options += `<option value="${index}">${bitrate.height}p (${Math.round(bitrate.bitrate/1000)}kbps)</option>`;
+        });
+
+        select.innerHTML = options;
+
+        select.onchange = function() {
+            const selectedIndex = parseInt(this.value);
+
+            if (selectedIndex === -1) {
+                // Automatic quality
+                dashPlayer.updateSettings({
+                    'streaming': {
+                        'abr': {
+                            'autoSwitchBitrate': {
+                                'video': true
+                            }
+                        }
+                    }
+                });
+                updatePlayerInfo('DASH otomatik kalite aktif');
+                debugLog('DASH automatic quality enabled');
+            } else {
+                // Manual quality selection
+                dashPlayer.updateSettings({
+                    'streaming': {
+                        'abr': {
+                            'autoSwitchBitrate': {
+                                'video': false
+                            }
+                        }
+                    }
+                });
+                dashPlayer.setQualityFor('video', selectedIndex);
+                const quality = bitrateInfo[selectedIndex];
+                updatePlayerInfo(`DASH manuel kalite: ${quality.height}p`);
+                debugLog('DASH manual quality set to:', quality);
+            }
+        };
+    }
+
+    // Update player info
+    function updatePlayerInfo(message) {
+        const info = document.getElementById('playerInfo');
+        info.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+    }
+
+    // Debug logging
+    function debugLog(...args) {
+        if (debugMode) {
+            console.log(...args);
+            const debugInfo = document.getElementById('debugInfo');
+            const logMessage = args.map(arg =>
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+            ).join(' ');
+            debugInfo.innerHTML += `[${new Date().toLocaleTimeString()}] ${logMessage}\n`;
+            debugInfo.scrollTop = debugInfo.scrollHeight;
+        }
+    }
+
+    // Toggle debug mode
+    function toggleDebug() {
+        debugMode = !debugMode;
+        const debugInfo = document.getElementById('debugInfo');
+        debugInfo.style.display = debugMode ? 'block' : 'none';
+
+        if (!debugMode) {
+            debugInfo.innerHTML = '';
+        }
+
+        debugLog('Debug mode', debugMode ? 'enabled' : 'disabled');
+    }
+
+    // Utility functions
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function formatDuration(seconds) {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    function getStatusText(status) {
+        const statusMap = {
+            'UPLOADING': 'Yükleniyor',
+            'PROCESSING': 'İşleniyor',
+            'READY': 'Hazır',
+            'ERROR': 'Hata'
+        };
+        return statusMap[status] || status;
+    }
+
+    function showError(message) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error';
+        errorDiv.textContent = message;
+        document.body.appendChild(errorDiv);
+        setTimeout(() => errorDiv.remove(), 5000);
+        debugLog('Error:', message);
+    }
+
+    function showSuccess(message) {
+        const successDiv = document.createElement('div');
+        successDiv.className = 'success';
+        successDiv.textContent = message;
+        document.body.appendChild(successDiv);
+        setTimeout(() => successDiv.remove(), 5000);
+        debugLog('Success:', message);
+    }
+
+    // Auto-refresh video list every 30 seconds
+    setInterval(loadVideoList, 30000);
+
+    // Page visibility API to pause/resume when tab is hidden/visible
+    document.addEventListener('visibilitychange', function() {
+        const video = document.getElementById('videoPlayer');
+        if (document.hidden && !video.paused) {
+            video.pause();
+            debugLog('Video paused due to tab hidden');
+        }
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        const video = document.getElementById('videoPlayer');
+
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
+            return; // Don't handle shortcuts when typing in inputs
+        }
+
+        switch(e.key) {
+            case ' ': // Spacebar - play/pause
+                e.preventDefault();
+                if (video.paused) {
+                    video.play();
+                } else {
+                    video.pause();
+                }
+                break;
+            case 'f': // F key - fullscreen
+                if (video.requestFullscreen) {
+                    video.requestFullscreen();
+                }
+                break;
+            case 'm': // M key - mute/unmute
+                video.muted = !video.muted;
+                break;
+            case 'ArrowLeft': // Left arrow - seek backward 10s
+                video.currentTime = Math.max(0, video.currentTime - 10);
+                break;
+            case 'ArrowRight': // Right arrow - seek forward 10s
+                video.currentTime = Math.min(video.duration, video.currentTime + 10);
+                break;
+            case 'ArrowUp': // Up arrow - volume up
+                e.preventDefault();
+                video.volume = Math.min(1, video.volume + 0.1);
+                break;
+            case 'ArrowDown': // Down arrow - volume down
+                e.preventDefault();
+                video.volume = Math.max(0, video.volume - 0.1);
+                break;
+        }
+    });
+</script>
+</body>
+</html> 

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT26.36S" profiles="urn:mpeg:dash:profile:isoff-main:2011">
+  <Period>
+    <AdaptationSet mimeType="video/mp4" codecs="avc1.4d401f" segmentAlignment="true" startWithSAP="1">
+      <Representation id="video0" bandwidth="3500000" width="608" height="1080">
+        <SegmentTemplate timescale="1000" initialization="1080p/init.mp4" media="1080p/segment_$Number%03d$.m4s" duration="4000" startNumber="0"/>
+      </Representation>
+      <Representation id="video1" bandwidth="2500000" width="404" height="720">
+        <SegmentTemplate timescale="1000" initialization="720p/init.mp4" media="720p/segment_$Number%03d$.m4s" duration="4000" startNumber="0"/>
+      </Representation>
+      <Representation id="video2" bandwidth="1500000" width="270" height="480">
+        <SegmentTemplate timescale="1000" initialization="480p/init.mp4" media="480p/segment_$Number%03d$.m4s" duration="4000" startNumber="0"/>
+      </Representation>
+      <Representation id="video3" bandwidth="800000" width="240" height="360">
+        <SegmentTemplate timescale="1000" initialization="360p/init.mp4" media="360p/segment_$Number%03d$.m4s" duration="4000" startNumber="0"/>
+      </Representation>
+      <Representation id="video4" bandwidth="400000" width="240" height="240">
+        <SegmentTemplate timescale="1000" initialization="240p/init.mp4" media="240p/segment_$Number%03d$.m4s" duration="4000" startNumber="0"/>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet mimeType="audio/mp4" codecs="mp4a.40.2" segmentAlignment="true" startWithSAP="1">
+      <Representation id="audio0" bandwidth="128000">
+        <SegmentTemplate timescale="1000" initialization="1080p/init.mp4" media="1080p/segment_$Number%03d$.m4s" duration="4000" startNumber="0"/>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

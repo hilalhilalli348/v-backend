@@ -433,6 +433,7 @@ public class VideoProcessingService {
                     .append(",RESOLUTION=").append(quality.width).append("x").append(quality.height)
                     .append(",CODECS=\"avc1.4d401f,mp4a.40.2\"")
                     .append(",FRAME-RATE=25.000\n");
+            // ✅ DOĞRU: Her kalite için ayrı playlist
             masterPlaylist.append(quality.name).append("/playlist.m3u8\n");
         }
 

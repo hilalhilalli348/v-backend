@@ -543,9 +543,10 @@
         }
     }
 
-    // Load HLS
+    // Load HLS - DÜZELTİLMİŞ URL
     function loadHLS() {
         const video = document.getElementById('videoPlayer');
+        // DOĞRU URL: Backend'deki endpoint'e uygun
         const hlsUrl = `${API_BASE}/${currentVideo.id}/hls/playlist.m3u8`;
 
         debugLog('Loading HLS URL:', hlsUrl);
@@ -605,9 +606,10 @@
         }
     }
 
-    // Load DASH
+    // Load DASH - DÜZELTİLMİŞ URL
     function loadDASH() {
         const video = document.getElementById('videoPlayer');
+        // DOĞRU URL: Backend'deki endpoint'e uygun
         const dashUrl = `${API_BASE}/${currentVideo.id}/dash/manifest.mpd`;
 
         debugLog('Loading DASH URL:', dashUrl);
