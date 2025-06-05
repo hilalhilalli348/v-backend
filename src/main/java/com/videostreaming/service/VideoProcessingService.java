@@ -444,6 +444,8 @@ public class VideoProcessingService {
         logger.info("Created master HLS manifest with {} quality levels", qualities.size());
     }
 
+    // VideoProcessingService.java içindeki generateMasterDASHManifest metodunu tamamen değiştir:
+
     private void generateMasterDASHManifest(String outputDir, List<QualityLevel> qualities, VideoInfo videoInfo)
             throws IOException {
 
@@ -468,26 +470,45 @@ public class VideoProcessingService {
             QualityLevel quality = qualities.get(i);
             int bandwidth = parseBandwidth(quality.videoBitrate);
 
+            // 🔥 GERÇEK SEGMENT SAYISINI VE SÜRELERİNİ AL
+            List<SegmentInfo> segments = getSegmentInfoFromPlaylist(outputDir, quality.name);
+            logger.info("Quality {} has {} segments with timeline", quality.name, segments.size());
+
             manifest.append("      <Representation id=\"video").append(i).append("\" ");
             manifest.append("bandwidth=\"").append(bandwidth).append("\" ");
             manifest.append("width=\"").append(quality.width).append("\" ");
             manifest.append("height=\"").append(quality.height).append("\">\n");
 
+            // 🔥 SEGMENT TEMPLATE + TIMELINE
             manifest.append("        <SegmentTemplate ");
             manifest.append("timescale=\"1000\" ");
             manifest.append("initialization=\"").append(quality.name).append("/init.mp4\" ");
             manifest.append("media=\"").append(quality.name).append("/segment_$Number%03d$.m4s\" ");
-            manifest.append("duration=\"4000\" ");
-            manifest.append("startNumber=\"0\"/>\n");
+            manifest.append("startNumber=\"0\">\n");
 
+            // 🔥 SEGMENT TIMELINE - HER SEGMENT İÇİN EXACT ZAMAN
+            manifest.append("          <SegmentTimeline>\n");
+
+            for (int segIdx = 0; segIdx < segments.size(); segIdx++) {
+                SegmentInfo seg = segments.get(segIdx);
+                manifest.append("            <S ");
+                if (segIdx == 0) {
+                    manifest.append("t=\"0\" "); // İlk segment t=0'dan başlar
+                }
+                manifest.append("d=\"").append(seg.durationMs).append("\"/>\n");
+            }
+
+            manifest.append("          </SegmentTimeline>\n");
+            manifest.append("        </SegmentTemplate>\n");
             manifest.append("      </Representation>\n");
         }
 
         manifest.append("    </AdaptationSet>\n");
 
-        // Audio AdaptationSet (tek kalite)
+        // Audio AdaptationSet (ilk kalitenin segmentlerini kullan)
         QualityLevel firstQuality = qualities.get(0);
         int audioBandwidth = parseBandwidth(firstQuality.audioBitrate);
+        List<SegmentInfo> audioSegments = getSegmentInfoFromPlaylist(outputDir, firstQuality.name);
 
         manifest.append("    <AdaptationSet mimeType=\"audio/mp4\" ");
         manifest.append("codecs=\"mp4a.40.2\" ");
@@ -501,8 +522,20 @@ public class VideoProcessingService {
         manifest.append("timescale=\"1000\" ");
         manifest.append("initialization=\"").append(firstQuality.name).append("/init.mp4\" ");
         manifest.append("media=\"").append(firstQuality.name).append("/segment_$Number%03d$.m4s\" ");
-        manifest.append("duration=\"4000\" ");
-        manifest.append("startNumber=\"0\"/>\n");
+        manifest.append("startNumber=\"0\">\n");
+
+        // Audio için de SegmentTimeline
+        manifest.append("          <SegmentTimeline>\n");
+        for (int segIdx = 0; segIdx < audioSegments.size(); segIdx++) {
+            SegmentInfo seg = audioSegments.get(segIdx);
+            manifest.append("            <S ");
+            if (segIdx == 0) {
+                manifest.append("t=\"0\" ");
+            }
+            manifest.append("d=\"").append(seg.durationMs).append("\"/>\n");
+        }
+        manifest.append("          </SegmentTimeline>\n");
+        manifest.append("        </SegmentTemplate>\n");
 
         manifest.append("      </Representation>\n");
         manifest.append("    </AdaptationSet>\n");
@@ -514,8 +547,64 @@ public class VideoProcessingService {
         Path manifestPath = Paths.get(outputDir, "master.mpd");
         Files.writeString(manifestPath, manifest.toString());
 
-        logger.info("Created master DASH manifest with {} quality levels", qualities.size());
+        logger.info("Created master DASH manifest with SegmentTimeline for {} qualities", qualities.size());
     }
+
+    /**
+     * HLS playlist dosyasından segment bilgilerini parse eder
+     */
+    private List<SegmentInfo> getSegmentInfoFromPlaylist(String outputDir, String qualityName) {
+        List<SegmentInfo> segments = new ArrayList<>();
+
+        try {
+            Path playlistPath = Paths.get(outputDir, qualityName, "playlist.m3u8");
+
+            if (!Files.exists(playlistPath)) {
+                logger.warn("Playlist not found: {}", playlistPath);
+                return segments;
+            }
+
+            List<String> lines = Files.readAllLines(playlistPath);
+
+            for (int i = 0; i < lines.size(); i++) {
+                String line = lines.get(i).trim();
+
+                // #EXTINF:6.160000, formatında segment süresi
+                if (line.startsWith("#EXTINF:")) {
+                    try {
+                        String durationStr = line.substring(8, line.indexOf(','));
+                        double durationSec = Double.parseDouble(durationStr);
+                        int durationMs = (int) Math.round(durationSec * 1000);
+
+                        segments.add(new SegmentInfo(durationMs));
+
+                    } catch (Exception e) {
+                        logger.warn("Could not parse EXTINF line: {}", line);
+                    }
+                }
+            }
+
+            logger.debug("Parsed {} segments from playlist {}", segments.size(), qualityName);
+
+        } catch (IOException e) {
+            logger.error("Error reading playlist for quality: {}", qualityName, e);
+        }
+
+        return segments;
+    }
+
+    /**
+     * Segment bilgilerini tutan helper class
+     */
+    private static class SegmentInfo {
+        final int durationMs;
+
+        SegmentInfo(int durationMs) {
+            this.durationMs = durationMs;
+        }
+    }
+
+
 
     private int parseBandwidth(String bitrate) {
         // "1500k" -> 1500000

@@ -298,7 +298,8 @@ public class VideoController {
 
     private String determineContentType(String filename) {
         if (filename.endsWith(".m4s")) {
-            return "video/iso.segment";
+            // "video/iso.segment" yerine "video/mp4" kullanın
+            return "video/mp4";  // Chrome'da daha iyi çalışır
         } else if (filename.endsWith(".mp4")) {
             return "video/mp4";
         } else if (filename.endsWith(".m3u8")) {

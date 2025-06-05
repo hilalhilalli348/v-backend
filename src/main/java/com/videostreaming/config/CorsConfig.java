@@ -12,30 +12,28 @@ public class CorsConfig {
     @Bean
     public CorsWebFilter corsWebFilter() {
         CorsConfiguration corsConfig = new CorsConfiguration();
-        
+
         // Tüm origin'lere izin ver (production'da belirli domain'lere kısıtla)
-        corsConfig.addAllowedOriginPattern("*");
-        
+        corsConfig.addAllowedOrigin("*"); // Credentials ile birlikte kullanılamaz
+        // veya belirli originlere izin ver:
+        // corsConfig.addAllowedOrigin("http://127.0.0.1:8001");
+        // corsConfig.addAllowedOrigin("http://localhost:8001");
+
         // İzin verilen HTTP metodları
-        corsConfig.addAllowedMethod("GET");
-        corsConfig.addAllowedMethod("POST");
-        corsConfig.addAllowedMethod("PUT");
-        corsConfig.addAllowedMethod("DELETE");
-        corsConfig.addAllowedMethod("OPTIONS");
-        corsConfig.addAllowedMethod("HEAD");
-        
+        corsConfig.addAllowedMethod("*");
+
         // İzin verilen header'lar
         corsConfig.addAllowedHeader("*");
-        
-        // Credentials ile isteklere izin ver
-        corsConfig.setAllowCredentials(true);
-        
+
+        // Credentials kullanmayı kapat (wildcard origin ile çalışması için)
+        corsConfig.setAllowCredentials(false);
+
         // Preflight cache süresi
         corsConfig.setMaxAge(3600L);
-        
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", corsConfig);
-        
+
         return new CorsWebFilter(source);
     }
 }
